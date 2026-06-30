@@ -36,6 +36,7 @@ export class TranslationOverlayManager {
   private mutationObserver: MutationObserver | null = null;
   private animationFrame: number | null = null;
   private activeEditor: ActiveEditor | null = null;
+  private captureSuppressed = false;
   private readonly callbacks: TranslationOverlayCallbacks;
   private readonly outsideClickHandler = (event: MouseEvent) => {
     if (!this.activeEditor) return;
@@ -122,6 +123,18 @@ export class TranslationOverlayManager {
     if (this.root) this.root.style.display = visible ? "block" : "none";
   }
 
+  setCaptureSuppressed(suppressed: boolean): void {
+    if (suppressed) this.finishEditing(true);
+    this.captureSuppressed = suppressed;
+    if (this.root) {
+      this.root.style.visibility = suppressed ? "hidden" : "visible";
+    }
+  }
+
+  finishActiveEdit(save = true): void {
+    this.finishEditing(save);
+  }
+
   removePage(pageId: string): void {
     const page = this.pages.get(pageId);
     if (!page) return;
@@ -138,6 +151,7 @@ export class TranslationOverlayManager {
     this.stopListening();
     this.root?.remove();
     this.root = null;
+    this.captureSuppressed = false;
   }
 
   get pageCount(): number {
@@ -197,6 +211,7 @@ export class TranslationOverlayManager {
       pointerEvents: "none",
       zIndex: "2147483641",
       display: this.visible ? "block" : "none",
+      visibility: this.captureSuppressed ? "hidden" : "visible",
     } as CSSStyleDeclaration);
     document.documentElement.appendChild(root);
     this.root = root;

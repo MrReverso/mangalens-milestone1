@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="520" viewBox="0 0 720 520">
+  <rect width="720" height="520" fill="#fff"/>
+  <rect x="18" y="18" width="684" height="484" fill="none" stroke="#552" stroke-width="8"/>
+  <circle cx="360" cy="250" r="150" fill="#f0d9c4" stroke="#442" stroke-width="7"/>
+  <text x="360" y="260" text-anchor="middle" font-family="sans-serif" font-size="26">PARTIAL PAGE</text>
+</svg>

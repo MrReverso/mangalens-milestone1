@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="1500" viewBox="0 0 720 1500">
+  <rect width="720" height="1500" fill="#fff"/>
+  <rect x="18" y="18" width="684" height="1464" fill="none" stroke="#225" stroke-width="8"/>
+  <g fill="#dce5f5" stroke="#225" stroke-width="5">
+    <rect x="45" y="60" width="630" height="380"/>
+    <rect x="45" y="500" width="630" height="380"/>
+    <rect x="45" y="940" width="630" height="480"/>
+  </g>
+  <text x="360" y="760" text-anchor="middle" font-family="sans-serif" font-size="30">TALL PAGE</text>
+</svg>

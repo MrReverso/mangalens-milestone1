@@ -1,11 +1,12 @@
 import { isMangaImageCandidate } from "@/lib/image-detector";
 import type {
-  ExtensionMessage,
+  CaptureContentResponse,
   ScanPageResponse,
   ScanStatusResponse,
   TranslationCommandResponse,
   TranslationStatusResponse,
 } from "@/lib/messages";
+import { isContentScriptMessage } from "@/lib/messages";
 import { isImageVisible } from "@/lib/image-position";
 import { MockTranslationProvider } from "@/lib/mock-translation-provider";
 import { OverlayManager } from "@/lib/overlay-manager";
@@ -18,16 +19,33 @@ import type {
   TranslationProvider,
 } from "@/types/translation";
 import type { SourceLanguage, TargetLanguage } from "@/types/extension";
+import {
+  captureRectsMatch,
+  captureRectForImage,
+  selectFirstFullyVisiblePage,
+} from "@/lib/capture/capture-eligibility";
+import { CaptureFailure, captureErrorCode } from "@/lib/capture/capture-errors";
+import type {
+  CapturePrepareResponse,
+  CaptureRestoreResponse,
+} from "@/types/capture";
 
 type ScannerResponse =
   | ScanPageResponse
   | ScanStatusResponse
   | TranslationCommandResponse
-  | TranslationStatusResponse;
+  | TranslationStatusResponse
+  | CaptureContentResponse;
 type SendResponse = (response: ScannerResponse) => void;
 
 interface PageSession extends PageTranslation {
   readonly element: HTMLImageElement;
+}
+
+interface PreparedCapture {
+  readonly captureToken: string;
+  readonly pageId: string;
+  readonly failsafeTimer: ReturnType<typeof setTimeout>;
 }
 
 export class MangaScannerController {
@@ -47,6 +65,7 @@ export class MangaScannerController {
   private domObserver: MutationObserver | null = null;
   private translationsVisible = true;
   private nextPageId = 1;
+  private preparedCapture: PreparedCapture | null = null;
 
   constructor(
     translationProvider: TranslationProvider = new MockTranslationProvider()
@@ -59,10 +78,11 @@ export class MangaScannerController {
   }
 
   readonly messageHandler = (
-    message: ExtensionMessage,
+    message: unknown,
     _sender: chrome.runtime.MessageSender,
     sendResponse: SendResponse
   ): boolean => {
+    if (!isContentScriptMessage(message)) return false;
     switch (message.type) {
       case "SCAN_PAGE":
         this.scanPage(sendResponse);
@@ -89,8 +109,14 @@ export class MangaScannerController {
       case "GET_TRANSLATION_STATUS":
         sendResponse(this.translationStatus());
         return false;
+      case "PREPARE_VISIBLE_PAGE_CAPTURE":
+        this.prepareVisiblePageCapture(message.captureToken)
+          .then(sendResponse);
+        return true;
+      case "RESTORE_AFTER_PAGE_CAPTURE":
+        sendResponse(this.restoreAfterPageCapture(message.captureToken));
+        return false;
       default:
-        sendResponse({ success: false, error: "Unknown command" });
         return false;
     }
   };
@@ -100,12 +126,96 @@ export class MangaScannerController {
   }
 
   destroy(): void {
+    this.forceRestoreCapture();
     chrome.runtime.onMessage.removeListener(this.messageHandler);
     this.stopLazyObserver();
     this.removePendingLoadListeners();
     this.resetTranslations();
     this.pages.clear();
     this.overlay.clearAll();
+  }
+
+  async prepareVisiblePageCapture(
+    captureToken: string
+  ): Promise<CapturePrepareResponse> {
+    if (this.preparedCapture) {
+      return { success: false, error: { code: "capture-in-progress" } };
+    }
+    if (!captureToken.trim()) {
+      return { success: false, error: { code: "unexpected-error" } };
+    }
+    if (this.pages.size === 0) {
+      return { success: false, error: { code: "no-detected-pages" } };
+    }
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const selected = selectFirstFullyVisiblePage(
+      [...this.pages.values()].map((page) => ({
+        pageId: page.pageId,
+        pageNumber: page.pageNumber,
+        element: page.element,
+      })),
+      viewportWidth,
+      viewportHeight
+    );
+    if (!selected) {
+      return { success: false, error: { code: "no-fully-visible-page" } };
+    }
+
+    try {
+      this.translationOverlay.finishActiveEdit(true);
+      this.overlay.setCaptureSuppressed(true);
+      this.translationOverlay.setCaptureSuppressed(true);
+      const failsafeTimer = setTimeout(
+        () => this.forceRestoreCapture(),
+        10_000
+      );
+      this.preparedCapture = {
+        captureToken,
+        pageId: selected.candidate.pageId,
+        failsafeTimer,
+      };
+      await waitForAnimationFrames(2);
+      if (Math.abs(window.innerWidth - viewportWidth) > 1 ||
+          Math.abs(window.innerHeight - viewportHeight) > 1) {
+        throw new CaptureFailure("page-moved");
+      }
+      const page = this.pages.get(selected.candidate.pageId);
+      if (!page || !page.element.isConnected) {
+        throw new CaptureFailure("page-disconnected");
+      }
+      const finalRect = captureRectForImage(
+        page.element,
+        viewportWidth,
+        viewportHeight
+      );
+      if (!finalRect || !captureRectsMatch(selected.rect, finalRect)) {
+        throw new CaptureFailure("page-moved");
+      }
+      return {
+        success: true,
+        descriptor: {
+          captureToken,
+          pageId: page.pageId,
+          pageNumber: page.pageNumber,
+          imageRect: finalRect,
+          viewportWidth,
+          viewportHeight,
+        },
+      };
+    } catch (error: unknown) {
+      this.forceRestoreCapture();
+      return { success: false, error: { code: captureErrorCode(error) } };
+    }
+  }
+
+  restoreAfterPageCapture(captureToken: string): CaptureRestoreResponse {
+    if (!this.preparedCapture) return { success: true };
+    if (this.preparedCapture.captureToken !== captureToken) {
+      return { success: false, error: { code: "capture-in-progress" } };
+    }
+    this.forceRestoreCapture();
+    return { success: true };
   }
 
   processImageCandidate(img: HTMLImageElement): void {
@@ -194,6 +304,7 @@ export class MangaScannerController {
 
   private clearMarkers(sendResponse: SendResponse): void {
     try {
+      this.forceRestoreCapture();
       this.stopLazyObserver();
       this.removePendingLoadListeners();
       this.resetTranslations();
@@ -304,6 +415,9 @@ export class MangaScannerController {
     this.overlay.removeMarker(img);
     const page = this.pageByElement.get(img);
     if (page) {
+      if (this.preparedCapture?.pageId === page.pageId) {
+        this.forceRestoreCapture();
+      }
       this.translationQueue.cancel(page.pageId);
       this.translationOverlay.removePage(page.pageId);
       this.pages.delete(page.pageId);
@@ -393,5 +507,20 @@ export class MangaScannerController {
       failedPages: pages.filter((page) => page.status === "error").length,
       translationsVisible: this.translationsVisible,
     };
+  }
+
+  private forceRestoreCapture(): void {
+    if (this.preparedCapture) {
+      clearTimeout(this.preparedCapture.failsafeTimer);
+      this.preparedCapture = null;
+    }
+    this.overlay.setCaptureSuppressed(false);
+    this.translationOverlay.setCaptureSuppressed(false);
+  }
+}
+
+export async function waitForAnimationFrames(count: number): Promise<void> {
+  for (let index = 0; index < count; index++) {
+    await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
 }

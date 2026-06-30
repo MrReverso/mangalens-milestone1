@@ -1,9 +1,48 @@
-# MangaLens — Milestone 2B: Translation Bubble Editing
+# MangaLens — Milestone 3A: Safe Image Capture Diagnostics
 
 MangaLens is a browser extension prototype for manga, manhwa, and webtoon
-translation experiences. Milestone 2B preserves manga-page detection and the
-local deterministic preview while adding safe, current-tab-session editing.
-It does not perform real translation.
+translation experiences. Milestone 3A preserves detection, mock translation,
+and session editing while adding a privacy-safe diagnostic pipeline that can
+capture one fully visible detected page. It does not perform real translation.
+
+## What Milestone 3A Adds
+
+- Selects the lowest-numbered detected page that is fully inside the viewport
+- Temporarily hides all MangaLens overlays for a clean visible-tab screenshot
+- Crops screenshot pixels in the background service worker
+- Returns only dimensions, PNG byte size, and capture method to the popup
+- Defines a validated, versioned contract for a future multipart backend
+- Provides a local, copyright-free capture fixture
+
+Captured image bytes are never sent to the popup, uploaded, persisted, logged,
+or written to storage. They exist only during one background capture operation.
+
+## Testing Image Capture
+
+1. Scan a supported page with **Scan Manga Page**.
+2. Scroll until one complete detected image fits inside the browser viewport.
+3. Click **Test Image Capture**.
+4. The popup reports the page number, cropped pixel dimensions, and PNG size.
+
+MangaLens hides page markers, badges, translations, and any active editor for
+the screenshot, then restores them in a `finally` path. Images taller or wider
+than the viewport cannot yet be captured as complete pages. Milestone 3A does
+not scroll, stitch screenshots, or fetch original image URLs.
+
+## Local Capture Fixture
+
+```bash
+pnpm fixture
+```
+
+Open `http://127.0.0.1:4173`. The fixture uses local SVG placeholders and
+includes fully visible, partial, oversized, and nested-scroll examples.
+
+## Future Backend Contract
+
+`types/translation-api.ts` defines runtime-validated version 1 metadata for a
+future multipart request containing one JSON metadata part and one binary
+`image/png` part. No endpoint or API client exists in this milestone.
 
 ## What Milestone 2B Adds
 
@@ -68,6 +107,9 @@ translation session.
 - **No OCR, real translation, AI model calls, API requests, backend, or image
   processing is implemented.**
 - Edits are session-only and are not persisted across refreshes or restarts.
+- Capture supports only one fully visible page at a time.
+- Pages larger than the viewport require a future scrolling/stitching milestone.
+- Capture diagnostics do not start OCR or translation.
 - Detection relies on image size heuristics (rendered and natural dimensions). Some non-manga images may be detected, and some manga images may be missed depending on the site's layout.
 - The content script is injected programmatically using `activeTab` + `scripting` permissions — it is only injected after the user interacts with the extension popup.
 - Only Chrome is tested in this milestone (Firefox and Edge support is planned for future milestones).
@@ -165,6 +207,7 @@ mangalens/
 ├── lib/
 │   ├── image-detector.ts    # Manga image detection logic
 │   ├── image-position.ts    # Normalized-to-viewport coordinate mapping
+│   ├── capture/             # Eligibility, coordinator, cropper, geometry
 │   ├── mock-translation-provider.ts # Deterministic local mock results
 │   ├── overlay-manager.ts   # Numbered page marker management
 │   ├── scanner-controller.ts # Page sessions and scan/translation orchestration
@@ -175,6 +218,8 @@ mangalens/
 │   └── storage.ts           # chrome.storage.local utility
 ├── types/
 │   ├── extension.ts         # Shared extension types and constants
+│   ├── capture.ts           # Capture descriptors, metadata, and errors
+│   ├── translation-api.ts   # Future validated multipart contract
 │   └── translation.ts       # Translation and normalized-coordinate models
 ├── tests/
 │   └── *.test.ts            # Detection, overlay, queue, and controller tests

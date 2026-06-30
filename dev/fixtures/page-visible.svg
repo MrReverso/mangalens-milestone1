@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="480" viewBox="0 0 720 480">
+  <rect width="720" height="480" fill="#fff"/>
+  <rect x="18" y="18" width="684" height="444" fill="none" stroke="#222" stroke-width="8"/>
+  <path d="M30 330 L240 120 L390 270 L520 90 L690 330" fill="#d8e7ef" stroke="#334" stroke-width="7"/>
+  <ellipse cx="190" cy="105" rx="110" ry="58" fill="#fff" stroke="#333" stroke-width="5"/>
+  <text x="190" y="112" text-anchor="middle" font-family="sans-serif" font-size="24">VISIBLE PAGE</text>
+</svg>
