@@ -11,23 +11,28 @@ const MAX_CAPTURE_BYTES = 20 * 1024 * 1024;
 export interface ScreenshotCropper {
   crop(
     screenshotDataUrl: string,
-    descriptor: CaptureDescriptor
+    descriptor: CaptureDescriptor,
+    signal?: AbortSignal
   ): Promise<CapturedImage>;
 }
 
 export class BrowserScreenshotCropper implements ScreenshotCropper {
   async crop(
     screenshotDataUrl: string,
-    descriptor: CaptureDescriptor
+    descriptor: CaptureDescriptor,
+    signal?: AbortSignal
   ): Promise<CapturedImage> {
+    throwIfAborted(signal);
     if (typeof createImageBitmap !== "function" ||
         typeof OffscreenCanvas === "undefined") {
       throw new CaptureFailure("unsupported-browser");
     }
     try {
       const screenshotBlob = decodePngDataUrl(screenshotDataUrl);
+      throwIfAborted(signal);
       const bitmap = await createImageBitmap(screenshotBlob);
       try {
+        throwIfAborted(signal);
         const crop = calculateCropGeometry(descriptor, {
           width: bitmap.width,
           height: bitmap.height,
@@ -35,6 +40,7 @@ export class BrowserScreenshotCropper implements ScreenshotCropper {
         const canvas = new OffscreenCanvas(crop.width, crop.height);
         const context = canvas.getContext("2d");
         if (!context) throw new CaptureFailure("unsupported-browser");
+        throwIfAborted(signal);
         context.drawImage(
           bitmap,
           crop.x,
@@ -47,9 +53,12 @@ export class BrowserScreenshotCropper implements ScreenshotCropper {
           crop.height
         );
         const blob = await canvas.convertToBlob({ type: "image/png" });
+        throwIfAborted(signal);
         if (blob.size > MAX_CAPTURE_BYTES) {
           throw new CaptureFailure("capture-too-large");
         }
+        const sha256 = await sha256Hex(blob);
+        throwIfAborted(signal);
         const metadata: CaptureMetadata = {
           pageId: descriptor.pageId,
           pageNumber: descriptor.pageNumber,
@@ -58,7 +67,7 @@ export class BrowserScreenshotCropper implements ScreenshotCropper {
           pixelWidth: crop.width,
           pixelHeight: crop.height,
           byteLength: blob.size,
-          sha256: await sha256Hex(blob),
+          sha256,
         };
         return { blob, metadata };
       } finally {
@@ -69,6 +78,10 @@ export class BrowserScreenshotCropper implements ScreenshotCropper {
       throw new CaptureFailure("crop-failed");
     }
   }
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw new CaptureFailure("timeout");
 }
 
 export function decodePngDataUrl(dataUrl: string): Blob {
