@@ -110,6 +110,24 @@ describe("translation bubble editing", () => {
     expect(commit).not.toHaveBeenCalled();
   });
 
+  it("saves and visibly preserves multiline text through hide and reopen", () => {
+    bubble().click();
+    textarea().value = "Line one\nLine two";
+    textarea().dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+    }));
+    expect(bubble().textContent).toBe("Line one\nLine two");
+    expect(bubble().style.whiteSpace).toBe("pre-wrap");
+    expect(bubble().style.overflowWrap).toBe("anywhere");
+
+    manager.setVisible(false);
+    manager.setVisible(true);
+    expect(bubble().textContent).toBe("Line one\nLine two");
+    bubble().click();
+    expect(textarea().value).toBe("Line one\nLine two");
+  });
+
   it("Escape cancels and restores the previous text", () => {
     bubble().click();
     textarea().value = "Discard me";

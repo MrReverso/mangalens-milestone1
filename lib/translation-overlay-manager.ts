@@ -91,6 +91,8 @@ export class TranslationOverlayManager {
         fontWeight: "600",
         lineHeight: "1.2",
         textAlign: "center",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
         overflow: "hidden",
         pointerEvents: "auto",
         cursor: "text",
@@ -127,6 +129,7 @@ export class TranslationOverlayManager {
     this.resizeObserver?.unobserve(page.image);
     for (const element of page.elements) element.remove();
     this.pages.delete(pageId);
+    this.cleanupWhenEmpty();
   }
 
   clear(): void {
@@ -242,6 +245,13 @@ export class TranslationOverlayManager {
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
     this.animationFrame = null;
     this.listening = false;
+  }
+
+  private cleanupWhenEmpty(): void {
+    if (this.pages.size > 0) return;
+    this.stopListening();
+    this.root?.remove();
+    this.root = null;
   }
 
   private beginEditing(
