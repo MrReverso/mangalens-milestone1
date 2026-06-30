@@ -38,6 +38,7 @@ const bubbles = [{
 function dependencies(
   overrides: Partial<TranslationCoordinatorDependencies> = {}
 ): TranslationCoordinatorDependencies {
+  const sequences = new Map<number, number>();
   return {
     captureImage: vi.fn(async () => captured),
     service: {
@@ -53,6 +54,11 @@ function dependencies(
       pageId: "page-2",
       bubbleCount: 1,
     })),
+    nextOperationSequence: vi.fn(async (tabId: number) => {
+      const nextSeq = (sequences.get(tabId) ?? 0) + 1;
+      sequences.set(tabId, nextSeq);
+      return nextSeq;
+    }),
     createRequestId: () => "request-1",
     reportStage: vi.fn(),
     timeoutMs: 100,
@@ -401,5 +407,116 @@ describe("TranslationCoordinator", () => {
     expect(sendToTabSpy).toHaveBeenCalledTimes(1);
     const sentMessage = (sendToTabSpy.mock.calls[0] as any)[1];
     expect(sentMessage.type).toBe("APPLY_TRANSLATION_RESULT");
+  });
+
+  it("simulates service-worker restart: multiple coordinator instances using a shared fake sequence store preserve monotonic ordering", async () => {
+    const sharedSequences = new Map<number, number>();
+    const fakeStoreNext = async (tabId: number) => {
+      const current = sharedSequences.get(tabId) ?? 0;
+      const nextVal = current + 1;
+      sharedSequences.set(tabId, nextVal);
+      return nextVal;
+    };
+
+    const seenMessages: any[] = [];
+    
+    const deps1 = dependencies({
+      nextOperationSequence: vi.fn(fakeStoreNext),
+      sendToTab: vi.fn(async (_tabId, message) => {
+        seenMessages.push(message);
+        return { success: true, pageId: "page-2", bubbleCount: 1 };
+      }),
+    });
+    const coordinator1 = new TranslationCoordinator(deps1);
+
+    for (let i = 0; i < 5; i++) {
+      const response = await coordinator1.translate(request);
+      expect(response.success).toBe(true);
+    }
+    expect(seenMessages).toHaveLength(5);
+    expect(seenMessages[4].operationSequence).toBe(5);
+
+    const deps2 = dependencies({
+      nextOperationSequence: vi.fn(fakeStoreNext),
+      sendToTab: vi.fn(async (_tabId, message) => {
+        seenMessages.push(message);
+        return { success: true, pageId: "page-2", bubbleCount: 1 };
+      }),
+    });
+    const coordinator2 = new TranslationCoordinator(deps2);
+
+    const response = await coordinator2.translate(request);
+    expect(response.success).toBe(true);
+    expect(seenMessages).toHaveLength(6);
+    expect(seenMessages[5].operationSequence).toBe(6);
+  });
+
+  it("rejects a second request for the same tab while sequence allocation is pending to prevent races", async () => {
+    let resolveSequence!: (val: number) => void;
+    const sequencePromise = new Promise<number>((resolve) => {
+      resolveSequence = resolve;
+    });
+
+    const deps = dependencies({
+      nextOperationSequence: () => sequencePromise,
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    const promise1 = coordinator.translate(request);
+
+    const promise2 = coordinator.translate(request);
+    expect(await promise2).toEqual({
+      success: false,
+      error: { code: "translation-in-progress" },
+    });
+
+    resolveSequence(1);
+    const result1 = await promise1;
+    expect(result1.success).toBe(true);
+  });
+
+  it("times out during sequence allocation, aborting the operation and never starting capture", async () => {
+    vi.useFakeTimers();
+    let resolveSequence!: (val: number) => void;
+    const sequencePromise = new Promise<number>((resolve) => {
+      resolveSequence = resolve;
+    });
+
+    const deps = dependencies({
+      nextOperationSequence: () => sequencePromise,
+      timeoutMs: 100,
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    const promise = coordinator.translate(request);
+
+    await vi.advanceTimersByTimeAsync(100);
+
+    const result = await promise;
+    expect(result).toEqual({
+      success: false,
+      error: { code: "timeout" },
+    });
+
+    resolveSequence(1);
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(deps.captureImage).not.toHaveBeenCalled();
+  });
+
+  it("releases the lock immediately if storage sequence allocation fails", async () => {
+    const deps = dependencies({
+      nextOperationSequence: vi.fn().mockRejectedValue(new Error("Storage failed")),
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    const result = await coordinator.translate(request);
+    expect(result).toEqual({
+      success: false,
+      error: { code: "unexpected-error" },
+    });
+
+    expect(coordinator.isActive(request.tabId)).toBe(false);
   });
 });

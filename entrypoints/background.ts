@@ -9,6 +9,7 @@ import {
   TranslationCoordinator,
   createBackgroundTranslationMessageHandler,
 } from "@/lib/translation/translation-coordinator";
+import { ChromeSessionSequenceStore } from "@/lib/translation/operation-sequence-store";
 
 export default defineBackground(() => {
   let translationCoordinator: TranslationCoordinator | null = null;
@@ -25,11 +26,13 @@ export default defineBackground(() => {
     isTabReserved: (tabId) =>
       translationCoordinator?.isActive(tabId) ?? false,
   });
+  const sequenceStore = new ChromeSessionSequenceStore();
   translationCoordinator = new TranslationCoordinator({
     captureImage: (request, signal) =>
       coordinator.captureImageForInternalUse(request, signal),
     service: new LocalDeterministicTranslationService(),
     sendToTab: (tabId, message) => chrome.tabs.sendMessage(tabId, message),
+    nextOperationSequence: (tabId) => sequenceStore.next(tabId),
     reportStage: (tabId, stage) => {
       chrome.runtime.sendMessage({
         type: "TRANSLATION_PIPELINE_PROGRESS",

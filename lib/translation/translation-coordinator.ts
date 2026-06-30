@@ -26,7 +26,6 @@ interface TranslationOperation {
   readonly controller: AbortController;
   retirementTimer: ReturnType<typeof setTimeout> | null;
   readonly expiresAt: number;
-  readonly operationSequence: number;
 }
 
 export interface TranslationCoordinatorDependencies {
@@ -43,6 +42,7 @@ export interface TranslationCoordinatorDependencies {
     tabId: number,
     message: ApplyTranslationResultMessage
   ) => Promise<unknown>;
+  readonly nextOperationSequence: (tabId: number) => Promise<number>;
   readonly createRequestId?: () => string;
   readonly reportStage?: (
     tabId: number,
@@ -108,7 +108,6 @@ export function createBackgroundTranslationMessageHandler(
 
 export class TranslationCoordinator {
   private readonly operations = new Map<number, TranslationOperation>();
-  private readonly nextSequences = new Map<number, number>();
   private readonly timeoutMs: number;
   private readonly retirementTimeoutMs: number;
   private readonly createRequestId: () => string;
@@ -133,22 +132,18 @@ export class TranslationCoordinator {
       return { success: false, error: { code: "translation-in-progress" } };
     }
     const expiresAt = Date.now() + this.timeoutMs;
-    const operationSequence = this.nextSequences.get(request.tabId) ?? 1;
-    this.nextSequences.set(request.tabId, operationSequence + 1);
 
     const operation: TranslationOperation = {
       controller: new AbortController(),
       retirementTimer: null,
       expiresAt,
-      operationSequence,
     };
     this.operations.set(request.tabId, operation);
 
     const workflow = this.performTranslation(
       request,
-      operation.controller.signal,
-      expiresAt,
-      operationSequence
+      operation,
+      operation.controller.signal
     );
     const outcome = workflow.then(
       (response) => ({ kind: "success" as const, response }),
@@ -177,10 +172,18 @@ export class TranslationCoordinator {
 
   private async performTranslation(
     request: TranslateVisiblePageMessage,
-    signal: AbortSignal,
-    expiresAt: number,
-    operationSequence: number
+    operation: TranslationOperation,
+    signal: AbortSignal
   ): Promise<BackgroundTranslationResponse> {
+    throwIfAborted(signal);
+
+    let operationSequence: number;
+    try {
+      operationSequence = await this.dependencies.nextOperationSequence(request.tabId);
+    } catch {
+      throw new TranslationPipelineFailure("unexpected-error");
+    }
+
     throwIfAborted(signal);
     await this.reportStage(request.tabId, "capturing");
     throwIfAborted(signal);
@@ -240,7 +243,7 @@ export class TranslationCoordinator {
       requestId,
       pageId: response.pageId,
       bubbles: response.bubbles,
-      expiresAt,
+      expiresAt: operation.expiresAt,
       operationSequence,
     });
     throwIfAborted(signal);
