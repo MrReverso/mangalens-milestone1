@@ -1,9 +1,48 @@
-# MangaLens — Milestone 3A: Safe Image Capture Diagnostics
+# MangaLens — Milestone 3B: Local Translation Pipeline
 
 MangaLens is a browser extension prototype for manga, manhwa, and webtoon
-translation experiences. Milestone 3A preserves detection, mock translation,
-and session editing while adding a privacy-safe diagnostic pipeline that can
-capture one fully visible detected page. It does not perform real translation.
+translation experiences. Milestone 3B connects capture, a deterministic local
+demo service, validated background orchestration, content-owned page sessions,
+and editable translation overlays. It does not perform OCR or real translation.
+
+## What Milestone 3B Adds
+
+- Adds **Translate Visible Page** for an end-to-end local demonstration
+- Reuses the Milestone 3A capture lifecycle and its active-tab, timeout,
+  restoration, size, and per-tab locking safeguards
+- Keeps cropped PNG bytes inside trusted background code
+- Passes the PNG to a deterministic local service with no network access
+- Runtime-validates request metadata, service output, messages, coordinates,
+  bubble IDs, and translated text at each extension boundary
+- Applies results through the scanner controller's existing page session, so
+  bubbles remain editable and visibility controls continue to work
+- Prevents concurrent translation pipelines per tab and discards late work
+  after cancellation or timeout
+
+## Running the Complete Local Pipeline
+
+1. Scan a supported page with **Scan Manga Page**.
+2. Scroll until one complete detected image fits inside the viewport.
+3. Select a target language and click **Translate Visible Page**.
+4. Watch the capture, processing, and apply stages in the popup.
+5. Click a resulting bubble to edit it with the Milestone 2B controls.
+
+The local service returns the same three fixed bubble positions for a given
+page and deterministic demo text for English, Spanish, Portuguese, French,
+Italian, or German. The text is not read from or derived from the image.
+
+### Three development actions
+
+- **Preview Translation** runs the original multi-page mock queue without image
+  capture.
+- **Test Image Capture** captures one fully visible page and returns safe
+  diagnostics only.
+- **Translate Visible Page** captures one page, processes it in the local demo
+  service, validates the result, and applies editable bubbles to that page.
+
+Captured image bytes are never sent through extension messages, uploaded,
+persisted, logged, or written to storage. They live only during the background
+operation and are released after local processing.
 
 ## What Milestone 3A Adds
 
@@ -17,9 +56,6 @@ capture one fully visible detected page. It does not perform real translation.
   completion so pixels from a switched tab are never cropped
 - Defines a validated, versioned contract for a future multipart backend
 - Provides a local, copyright-free capture fixture
-
-Captured image bytes are never sent to the popup, uploaded, persisted, logged,
-or written to storage. They exist only during one background capture operation.
 
 ## Testing Image Capture
 
@@ -46,7 +82,8 @@ includes fully visible, partial, oversized, and nested-scroll examples.
 
 `types/translation-api.ts` defines runtime-validated version 1 metadata for a
 future multipart request containing one JSON metadata part and one binary
-`image/png` part. No endpoint or API client exists in this milestone.
+`image/png` part. Milestone 3B exercises that contract locally; no endpoint or
+API client exists.
 
 ## What Milestone 2B Adds
 
@@ -107,17 +144,23 @@ translation session.
 
 ## Current Limitations
 
-- **All translations and bubble positions are mocked locally.**
-- **No OCR, real translation, AI model calls, API requests, backend, or image
-  processing is implemented.**
+- **All translations and bubble positions are deterministic local demos.**
+- **No OCR, real translation, AI model calls, API requests, or backend is
+  implemented.**
 - Edits are session-only and are not persisted across refreshes or restarts.
 - Capture supports only one fully visible page at a time.
 - Pages larger than the viewport require a future scrolling/stitching milestone.
+- Demo text is not derived from captured image content.
 - Capture diagnostics do not start OCR or translation.
 - Detection relies on image size heuristics (rendered and natural dimensions). Some non-manga images may be detected, and some manga images may be missed depending on the site's layout.
 - The content script is injected programmatically using `activeTab` + `scripting` permissions — it is only injected after the user interacts with the extension popup.
 - Only Chrome is tested in this milestone (Firefox and Edge support is planned for future milestones).
 - SVG images, CSS background images, and `<picture>` elements are not scanned — only standard `<img>` elements.
+
+The recommended next milestone is an explicitly reviewed development transport
+and OCR/translation provider. That milestone must separately review network
+permissions, privacy, authentication, retention, and failure behavior before
+any captured bytes leave the extension.
 - The extension does not work on `chrome://`, `chrome-extension://`, or other restricted browser pages.
 
 ## Required Software
@@ -165,7 +208,10 @@ removed-image cleanup. Milestone 2A tests additionally cover deterministic mock
 translations, normalized coordinate validation, serial queue behavior,
 cancellation, visibility, translation positioning, and complete cleanup.
 Milestone 2B tests cover keyboard editing, validation, focus, outside clicks,
-safe rendering, session ownership, positioning, and teardown.
+safe rendering, session ownership, positioning, and teardown. Milestone 3B
+tests cover trusted internal capture, deterministic local service output,
+strict message/response validation, translation locks, timeout cancellation,
+safe content application, editability, and image-byte privacy.
 
 GitHub Actions runs the install, compile, test, and production-build checks on
 every push and pull request.
@@ -203,7 +249,7 @@ mangalens/
 │   │   ├── main.tsx         # Popup entry point
 │   │   ├── index.html       # Popup HTML shell
 │   │   └── style.css        # Popup styles
-│   ├── background.ts        # Background service worker (init only)
+│   ├── background.ts        # Capture and local-translation orchestration
 │   └── unlisted-content.ts  # Content script (injected programmatically)
 ├── components/
 │   ├── LanguageSelect.tsx   # Reusable language dropdown component
@@ -212,6 +258,7 @@ mangalens/
 │   ├── image-detector.ts    # Manga image detection logic
 │   ├── image-position.ts    # Normalized-to-viewport coordinate mapping
 │   ├── capture/             # Eligibility, coordinator, cropper, geometry
+│   ├── translation/         # Local service and background coordinator
 │   ├── mock-translation-provider.ts # Deterministic local mock results
 │   ├── overlay-manager.ts   # Numbered page marker management
 │   ├── scanner-controller.ts # Page sessions and scan/translation orchestration
@@ -224,6 +271,7 @@ mangalens/
 │   ├── extension.ts         # Shared extension types and constants
 │   ├── capture.ts           # Capture descriptors, metadata, and errors
 │   ├── translation-api.ts   # Future validated multipart contract
+│   ├── translation-pipeline.ts # Local pipeline messages and responses
 │   └── translation.ts       # Translation and normalized-coordinate models
 ├── tests/
 │   └── *.test.ts            # Detection, overlay, queue, and controller tests

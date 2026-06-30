@@ -5,7 +5,7 @@ import {
 import type { ScreenshotCropper } from "@/lib/capture/screenshot-cropper";
 import type {
   BackgroundCaptureResponse,
-  CaptureMetadata,
+  CapturedImage,
   CapturePrepareResponse,
 } from "@/types/capture";
 import {
@@ -17,7 +17,7 @@ import type {
   BackgroundToContentMessage,
   CaptureFirstVisiblePageMessage,
 } from "@/lib/messages";
-import { isPopupToBackgroundMessage } from "@/lib/messages";
+import { isCaptureFirstVisiblePageMessage } from "@/lib/messages";
 
 const DEFAULT_TIMEOUT_MS = 8_000;
 const DEFAULT_RESTORE_TIMEOUT_MS = 1_500;
@@ -34,7 +34,7 @@ interface CaptureOperation {
 }
 
 type WorkflowOutcome =
-  | { readonly success: true; readonly metadata: CaptureMetadata }
+  | { readonly success: true; readonly captured: CapturedImage }
   | { readonly success: false; readonly error: unknown };
 
 export interface CaptureCoordinatorDependencies {
@@ -49,6 +49,7 @@ export interface CaptureCoordinatorDependencies {
   readonly timeoutMs?: number;
   readonly restoreTimeoutMs?: number;
   readonly retirementTimeoutMs?: number;
+  readonly isTabReserved?: (tabId: number) => boolean;
 }
 
 export function createBackgroundCaptureMessageHandler(
@@ -59,7 +60,7 @@ export function createBackgroundCaptureMessageHandler(
     _sender: chrome.runtime.MessageSender,
     sendResponse: (response: BackgroundCaptureResponse) => void
   ): boolean => {
-    if (!isPopupToBackgroundMessage(message)) return false;
+    if (!isCaptureFirstVisiblePageMessage(message)) return false;
     coordinator.capture(message).then(
       sendResponse,
       () => sendResponse({
@@ -87,22 +88,44 @@ export class CaptureCoordinator {
       dependencies.retirementTimeoutMs ?? DEFAULT_RETIREMENT_TIMEOUT_MS;
   }
 
+  isActive(tabId: number): boolean {
+    return this.operations.has(tabId);
+  }
+
   async capture(
     request: CaptureFirstVisiblePageMessage
   ): Promise<BackgroundCaptureResponse> {
+    if (this.dependencies.isTabReserved?.(request.tabId)) {
+      return { success: false, error: { code: "capture-in-progress" } };
+    }
+    try {
+      const captured = await this.captureImageForInternalUse(request);
+      return { success: true, metadata: captured.metadata };
+    } catch (error: unknown) {
+      return {
+        success: false,
+        error: { code: captureErrorCode(error) },
+      };
+    }
+  }
+
+  async captureImageForInternalUse(
+    request: CaptureFirstVisiblePageMessage,
+    parentSignal?: AbortSignal
+  ): Promise<CapturedImage> {
     if (!Number.isInteger(request.tabId) || request.tabId <= 0 ||
         !Number.isInteger(request.windowId) || request.windowId <= 0) {
-      return { success: false, error: { code: "restricted-page" } };
+      throw new CaptureFailure("restricted-page");
     }
     if (this.operations.has(request.tabId)) {
-      return { success: false, error: { code: "capture-in-progress" } };
+      throw new CaptureFailure("capture-in-progress");
     }
 
     let captureToken: string;
     try {
       captureToken = this.createToken();
     } catch {
-      return { success: false, error: { code: "unexpected-error" } };
+      throw new CaptureFailure("unexpected-error");
     }
     const operation: CaptureOperation = {
       tabId: request.tabId,
@@ -114,9 +137,12 @@ export class CaptureCoordinator {
       retirementTimer: null,
     };
     this.operations.set(request.tabId, operation);
+    const cancelFromParent = () => operation.abortController.abort();
+    parentSignal?.addEventListener("abort", cancelFromParent, { once: true });
+    if (parentSignal?.aborted) cancelFromParent();
 
     const workflowOutcome = this.performCapture(request, operation).then(
-      (metadata): WorkflowOutcome => ({ success: true, metadata }),
+      (captured): WorkflowOutcome => ({ success: true, captured }),
       (error: unknown): WorkflowOutcome => ({ success: false, error })
     ).finally(() => {
       operation.workflowSettled = true;
@@ -128,18 +154,16 @@ export class CaptureCoordinator {
       timeoutTimer = setTimeout(() => resolve("timeout"), this.timeoutMs);
     });
 
-    let response: BackgroundCaptureResponse;
+    let result: CapturedImage | null = null;
+    let failure: unknown = null;
     const firstOutcome = await Promise.race([workflowOutcome, timeout]);
     if (firstOutcome === "timeout") {
       operation.abortController.abort();
-      response = { success: false, error: { code: "timeout" } };
+      failure = new CaptureFailure("timeout");
     } else if (firstOutcome.success) {
-      response = { success: true, metadata: firstOutcome.metadata };
+      result = firstOutcome.captured;
     } else {
-      response = {
-        success: false,
-        error: { code: captureErrorCode(firstOutcome.error) },
-      };
+      failure = firstOutcome.error;
     }
     if (timeoutTimer !== null) clearTimeout(timeoutTimer);
 
@@ -147,13 +171,20 @@ export class CaptureCoordinator {
     operation.responseCleanupComplete = true;
     this.releaseIfRetired(operation);
     if (!operation.workflowSettled) this.startRetirementDeadline(operation);
-    return response;
+    parentSignal?.removeEventListener("abort", cancelFromParent);
+    if (failure !== null) {
+      throw failure instanceof CaptureFailure
+        ? failure
+        : new CaptureFailure(captureErrorCode(failure));
+    }
+    if (!result) throw new CaptureFailure("unexpected-error");
+    return result;
   }
 
   private async performCapture(
     request: CaptureFirstVisiblePageMessage,
     operation: CaptureOperation
-  ): Promise<CaptureMetadata> {
+  ): Promise<CapturedImage> {
     this.throwIfCancelled(operation);
     const isActive = await this.dependencies.isTabActive(
       request.tabId,
@@ -198,7 +229,7 @@ export class CaptureCoordinator {
     );
     this.throwIfCancelled(operation);
     this.throwIfCancelled(operation);
-    return captured.metadata;
+    return captured;
   }
 
   private throwIfCancelled(operation: CaptureOperation): void {

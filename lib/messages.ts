@@ -10,6 +10,16 @@ import type {
   CaptureRestoreResponse,
 } from "@/types/capture";
 import { isNonEmptyString, isPositiveInteger } from "@/types/capture";
+import type {
+  ApplyTranslationResultMessage,
+  ApplyTranslationResultResponse,
+  BackgroundTranslationResponse,
+  TranslateVisiblePageMessage,
+} from "@/types/translation-pipeline";
+import {
+  isTranslateVisiblePageMessage,
+  validateApplyTranslationResultMessage,
+} from "@/types/translation-pipeline";
 
 export interface ScanPageMessage {
   readonly type: "SCAN_PAGE";
@@ -103,13 +113,16 @@ export type PopupToContentMessage =
 
 export type BackgroundToContentMessage =
   | PrepareVisiblePageCaptureMessage
-  | RestoreAfterPageCaptureMessage;
+  | RestoreAfterPageCaptureMessage
+  | ApplyTranslationResultMessage;
 
 export type ContentScriptMessage =
   | PopupToContentMessage
   | BackgroundToContentMessage;
 
-export type PopupToBackgroundMessage = CaptureFirstVisiblePageMessage;
+export type PopupToBackgroundMessage =
+  | CaptureFirstVisiblePageMessage
+  | TranslateVisiblePageMessage;
 
 export type ExtensionMessage = PopupToContentMessage;
 export type ScanPageResponse = ScanSuccessResponse | ScanErrorResponse;
@@ -119,6 +132,11 @@ export type CaptureContentResponse =
   | CaptureRestoreResponse;
 
 export type { BackgroundCaptureResponse };
+export type {
+  ApplyTranslationResultResponse,
+  BackgroundTranslationResponse,
+  TranslateVisiblePageMessage,
+};
 
 const CONTENT_MESSAGE_TYPES = new Set<string>([
   "SCAN_PAGE",
@@ -130,6 +148,7 @@ const CONTENT_MESSAGE_TYPES = new Set<string>([
   "GET_TRANSLATION_STATUS",
   "PREPARE_VISIBLE_PAGE_CAPTURE",
   "RESTORE_AFTER_PAGE_CAPTURE",
+  "APPLY_TRANSLATION_RESULT",
 ]);
 
 export function isContentScriptMessage(
@@ -142,14 +161,24 @@ export function isContentScriptMessage(
       value.type === "RESTORE_AFTER_PAGE_CAPTURE") {
     return "captureToken" in value && isNonEmptyString(value.captureToken);
   }
+  if (value.type === "APPLY_TRANSLATION_RESULT") {
+    return validateApplyTranslationResultMessage(value) !== null;
+  }
   return true;
+}
+
+export function isCaptureFirstVisiblePageMessage(
+  value: unknown
+): value is CaptureFirstVisiblePageMessage {
+  return typeof value === "object" && value !== null &&
+    "type" in value && value.type === "CAPTURE_FIRST_VISIBLE_PAGE" &&
+    "tabId" in value && isPositiveInteger(value.tabId) &&
+    "windowId" in value && isPositiveInteger(value.windowId);
 }
 
 export function isPopupToBackgroundMessage(
   value: unknown
 ): value is PopupToBackgroundMessage {
-  return typeof value === "object" && value !== null &&
-    "type" in value && value.type === "CAPTURE_FIRST_VISIBLE_PAGE" &&
-    "tabId" in value && isPositiveInteger(value.tabId) &&
-    "windowId" in value && isPositiveInteger(value.windowId);
+  return isCaptureFirstVisiblePageMessage(value) ||
+    isTranslateVisiblePageMessage(value);
 }

@@ -5,6 +5,7 @@ import type {
   ScanStatusResponse,
   TranslationCommandResponse,
   TranslationStatusResponse,
+  ApplyTranslationResultResponse,
 } from "@/lib/messages";
 import { isContentScriptMessage } from "@/lib/messages";
 import { isImageVisible } from "@/lib/image-position";
@@ -29,13 +30,16 @@ import type {
   CapturePrepareResponse,
   CaptureRestoreResponse,
 } from "@/types/capture";
+import type { TranslationBubble } from "@/types/translation";
+import { validateTranslationApiSuccessResponse } from "@/types/translation-api";
 
 type ScannerResponse =
   | ScanPageResponse
   | ScanStatusResponse
   | TranslationCommandResponse
   | TranslationStatusResponse
-  | CaptureContentResponse;
+  | CaptureContentResponse
+  | ApplyTranslationResultResponse;
 type SendResponse = (response: ScannerResponse) => void;
 
 interface PageSession extends PageTranslation {
@@ -66,6 +70,8 @@ export class MangaScannerController {
   private translationsVisible = true;
   private nextPageId = 1;
   private preparedCapture: PreparedCapture | null = null;
+  private readonly appliedRequestByPage = new Map<string, string>();
+  private readonly appliedSequenceByPage = new Map<string, number>();
 
   constructor(
     translationProvider: TranslationProvider = new MockTranslationProvider()
@@ -115,6 +121,15 @@ export class MangaScannerController {
         return true;
       case "RESTORE_AFTER_PAGE_CAPTURE":
         sendResponse(this.restoreAfterPageCapture(message.captureToken));
+        return false;
+      case "APPLY_TRANSLATION_RESULT":
+        sendResponse(this.applyTranslationResult(
+          message.requestId,
+          message.pageId,
+          message.bubbles,
+          message.expiresAt,
+          message.operationSequence
+        ));
         return false;
       default:
         return false;
@@ -270,6 +285,124 @@ export class MangaScannerController {
     return true;
   }
 
+  applyTranslationResult(
+    requestId: string,
+    pageId: string,
+    bubbles: readonly TranslationBubble[],
+    expiresAt: number,
+    operationSequence: number
+  ): ApplyTranslationResultResponse {
+    // 1. Validate everything and snapshot first
+    const validated = validateTranslationApiSuccessResponse({
+      contractVersion: 1,
+      requestId,
+      pageId,
+      bubbles,
+    });
+    if (!validated) {
+      return {
+        success: false,
+        error: { code: "invalid-translation-response" },
+      };
+    }
+
+    if (
+      typeof expiresAt !== "number" ||
+      !Number.isSafeInteger(expiresAt) ||
+      expiresAt <= 0 ||
+      Date.now() >= expiresAt
+    ) {
+      return {
+        success: false,
+        error: { code: "stale-translation-result" },
+      };
+    }
+
+    if (
+      typeof operationSequence !== "number" ||
+      !Number.isSafeInteger(operationSequence) ||
+      operationSequence <= 0
+    ) {
+      return {
+        success: false,
+        error: { code: "stale-translation-result" },
+      };
+    }
+
+    const page = this.pages.get(pageId);
+    if (!page) {
+      return { success: false, error: { code: "target-page-missing" } };
+    }
+    if (!page.element.isConnected) {
+      return {
+        success: false,
+        error: { code: "target-page-disconnected" },
+      };
+    }
+
+    const appliedSequence = this.appliedSequenceByPage.get(pageId);
+    if (appliedSequence !== undefined) {
+      if (operationSequence === appliedSequence) {
+        if (this.appliedRequestByPage.get(pageId) === requestId) {
+          return {
+            success: true,
+            pageId,
+            bubbleCount: page.bubbles.length,
+          };
+        }
+        return {
+          success: false,
+          error: { code: "stale-translation-result" },
+        };
+      } else if (operationSequence < appliedSequence) {
+        return {
+          success: false,
+          error: { code: "stale-translation-result" },
+        };
+      }
+    }
+
+    // Save previous state for rollback
+    const priorStatus = page.status;
+    const priorError = page.error;
+    const priorBubbles = page.bubbles;
+
+    try {
+      this.translationOverlay.renderPage(pageId, page.element, validated.bubbles);
+    } catch {
+      // If rendering fails, preserve the previous queue and controller state
+      // and restore the previous overlay if necessary.
+      // Do not record the request or sequence as applied on failure.
+      page.status = priorStatus;
+      page.error = priorError;
+      page.bubbles = priorBubbles;
+      try {
+        if (priorBubbles && priorBubbles.length > 0) {
+          this.translationOverlay.renderPage(pageId, page.element, priorBubbles);
+        } else {
+          this.translationOverlay.removePage(pageId);
+        }
+      } catch {
+        // Ignore restore overlay secondary failures
+      }
+      return { success: false, error: { code: "apply-failed" } };
+    }
+
+    // 3. Only after rendering succeeds should queue cancellation, page-state mutation, and request tracking be committed.
+    this.translationQueue.cancel(pageId);
+    page.status = "complete";
+    page.error = undefined;
+    page.bubbles = validated.bubbles;
+    this.appliedRequestByPage.set(pageId, requestId);
+    this.appliedSequenceByPage.set(pageId, operationSequence);
+
+    return {
+      success: true,
+      pageId,
+      bubbleCount: page.bubbles.length,
+    };
+  }
+
   private scanPage(sendResponse: SendResponse): void {
     if (this.isScanning) {
       sendResponse({
@@ -420,6 +553,8 @@ export class MangaScannerController {
       }
       this.translationQueue.cancel(page.pageId);
       this.translationOverlay.removePage(page.pageId);
+      this.appliedRequestByPage.delete(page.pageId);
+      this.appliedSequenceByPage.delete(page.pageId);
       this.pages.delete(page.pageId);
       this.pageByElement.delete(img);
     }
@@ -489,6 +624,8 @@ export class MangaScannerController {
   private resetTranslations(): void {
     this.translationQueue.clear();
     this.translationOverlay.clear();
+    this.appliedRequestByPage.clear();
+    this.appliedSequenceByPage.clear();
     for (const page of this.pages.values()) {
       page.status = "detected";
       page.bubbles = [];

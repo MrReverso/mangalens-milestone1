@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import LanguageSelect from "@/components/LanguageSelect";
 import {
   SOURCE_LANGUAGE_OPTIONS,
@@ -18,6 +18,12 @@ import type {
 } from "@/lib/messages";
 import { isBackgroundCaptureResponse } from "@/types/capture";
 import { captureErrorMessage } from "@/lib/capture/capture-status";
+import {
+  isBackgroundTranslationResponse,
+  isTranslationPipelineProgressMessage,
+} from "@/types/translation-pipeline";
+import type { TranslationPipelineStage } from "@/types/translation-pipeline";
+import { translationPipelineErrorMessage } from "@/lib/translation/translation-pipeline-status";
 import "./style.css";
 
 // ── Status States ──────────────────────────────────────────────
@@ -96,6 +102,10 @@ export default function App() {
   const [translationsVisible, setTranslationsVisible] = useState(true);
   const [hasTranslations, setHasTranslations] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [isLocalTranslating, setIsLocalTranslating] = useState(false);
+  const [localStage, setLocalStage] =
+    useState<TranslationPipelineStage>("capturing");
+  const localTranslationTabId = useRef<number | null>(null);
 
   // ── Load persisted settings on mount ─────────────────────────
   useEffect(() => {
@@ -105,6 +115,22 @@ export default function App() {
       setTranslationsVisible(settings.translationsVisible);
       checkScanStatus(settings.translationsVisible);
     });
+  }, []);
+
+  useEffect(() => {
+    const listener = (message: unknown): void => {
+      if (!isTranslationPipelineProgressMessage(message) ||
+          message.tabId !== localTranslationTabId.current) return;
+      setLocalStage(message.stage);
+      const progressText: Record<TranslationPipelineStage, string> = {
+        capturing: "Capturing Page\u2026",
+        processing: "Processing Translation\u2026",
+        applying: "Applying Translation\u2026",
+      };
+      setStatus({ kind: "scanning", message: progressText[message.stage] });
+    };
+    chrome.runtime.onMessage.addListener(listener);
+    return () => chrome.runtime.onMessage.removeListener(listener);
   }, []);
 
   // ── Persist language changes ─────────────────────────────────
@@ -348,6 +374,46 @@ export default function App() {
     }
   }
 
+  async function handleLocalTranslation(): Promise<void> {
+    setIsLocalTranslating(true);
+    setLocalStage("capturing");
+    setStatus({ kind: "scanning", message: "Capturing Page\u2026" });
+    try {
+      const tab = await getActiveTab();
+      if (!tab.id || !tab.windowId) throw new Error("restricted-page");
+      localTranslationTabId.current = tab.id;
+      await ensureContentScript(tab);
+      const rawResponse: unknown = await chrome.runtime.sendMessage({
+        type: "TRANSLATE_VISIBLE_PAGE_LOCAL",
+        tabId: tab.id,
+        windowId: tab.windowId,
+        sourceLanguage,
+        targetLanguage,
+      });
+      if (!isBackgroundTranslationResponse(rawResponse)) {
+        throw new Error("invalid-translation-response");
+      }
+      if (!rawResponse.success) {
+        setStatus({
+          kind: "error",
+          message: translationPipelineErrorMessage(rawResponse.error.code),
+        });
+        return;
+      }
+      setHasTranslations(true);
+      setStatus({
+        kind: "success",
+        message: `Translated Page ${rawResponse.pageNumber} \u00b7 ` +
+          `${rawResponse.bubbleCount} bubbles \u00b7 Local demo`,
+      });
+    } catch {
+      setStatus({ kind: "error", message: "Translation failed" });
+    } finally {
+      localTranslationTabId.current = null;
+      setIsLocalTranslating(false);
+    }
+  }
+
   // ── Clear Markers ────────────────────────────────────────────
   async function handleClear(): Promise<void> {
     try {
@@ -361,6 +427,7 @@ export default function App() {
       setHasMarkers(false);
       setHasTranslations(false);
       setIsTranslating(false);
+      setIsLocalTranslating(false);
       setStatus(INITIAL_STATUS);
     } catch {
       // Page may have navigated away.
@@ -405,7 +472,7 @@ export default function App() {
       <section className="popup-actions">
         <button
           className={`btn ${hasMarkers ? "btn-secondary" : "btn-primary"}`}
-          disabled={isScanning || isCapturing}
+          disabled={isScanning || isCapturing || isLocalTranslating}
           onClick={handleScan}
         >
           {isScanning ? "Scanning\u2026" : "Scan Manga Page"}
@@ -414,7 +481,7 @@ export default function App() {
         {hasMarkers && (
           <button
             className="btn btn-primary"
-            disabled={isTranslating || isCapturing}
+            disabled={isTranslating || isCapturing || isLocalTranslating}
             onClick={handlePreviewTranslation}
           >
             {isTranslating ? "Translating\u2026" : "Preview Translation"}
@@ -423,8 +490,28 @@ export default function App() {
 
         {hasMarkers && (
           <button
+            className="btn btn-primary"
+            disabled={
+              isScanning || isTranslating || isCapturing || isLocalTranslating
+            }
+            onClick={handleLocalTranslation}
+          >
+            {isLocalTranslating
+              ? localStage === "capturing"
+                ? "Capturing\u2026"
+                : localStage === "processing"
+                  ? "Processing\u2026"
+                  : "Applying\u2026"
+              : "Translate Visible Page"}
+          </button>
+        )}
+
+        {hasMarkers && (
+          <button
             className="btn btn-secondary"
-            disabled={isScanning || isTranslating || isCapturing}
+            disabled={
+              isScanning || isTranslating || isCapturing || isLocalTranslating
+            }
             onClick={handleTestCapture}
           >
             {isCapturing ? "Capturing\u2026" : "Test Image Capture"}
@@ -446,6 +533,7 @@ export default function App() {
         {(hasTranslations || isTranslating) && (
           <button
             className="btn btn-secondary"
+            disabled={isLocalTranslating}
             onClick={handleClearTranslations}
           >
             Clear Translations
@@ -455,6 +543,7 @@ export default function App() {
         {hasMarkers && (
           <button
             className="btn btn-secondary"
+            disabled={isLocalTranslating}
             onClick={handleClear}
           >
             Clear Page Markers
