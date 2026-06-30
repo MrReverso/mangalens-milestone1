@@ -254,4 +254,152 @@ describe("TranslationCoordinator", () => {
     )).toBe(false);
     expect(sendResponse).not.toHaveBeenCalled();
   });
+
+  it("background handler returns invalid-language for invalid languages in translation envelope", () => {
+    const handler = createBackgroundTranslationMessageHandler(
+      new TranslationCoordinator(dependencies())
+    );
+    const sendResponse = vi.fn();
+    
+    const result1 = handler(
+      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: 2, sourceLanguage: "invalid", targetLanguage: "en" },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+    expect(result1).toBe(true);
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: false,
+      error: { code: "invalid-language" },
+    });
+
+    sendResponse.mockClear();
+
+    const result2 = handler(
+      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: 2, sourceLanguage: "auto", targetLanguage: "invalid" },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+    expect(result2).toBe(true);
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: false,
+      error: { code: "invalid-language" },
+    });
+  });
+
+  it("background handler returns restricted-page for invalid tabId/windowId in translation envelope", () => {
+    const handler = createBackgroundTranslationMessageHandler(
+      new TranslationCoordinator(dependencies())
+    );
+    const sendResponse = vi.fn();
+
+    const result1 = handler(
+      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 0, windowId: 2, sourceLanguage: "auto", targetLanguage: "en" },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+    expect(result1).toBe(true);
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: false,
+      error: { code: "restricted-page" },
+    });
+
+    sendResponse.mockClear();
+
+    const result2 = handler(
+      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: -1, sourceLanguage: "auto", targetLanguage: "en" },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    );
+    expect(result2).toBe(true);
+    expect(sendResponse).toHaveBeenCalledWith({
+      success: false,
+      error: { code: "restricted-page" },
+    });
+  });
+
+  it("background handler ignores completely unrelated messages", () => {
+    const handler = createBackgroundTranslationMessageHandler(
+      new TranslationCoordinator(dependencies())
+    );
+    const sendResponse = vi.fn();
+    expect(handler(
+      { type: "SOME_OTHER_EVENT" },
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    )).toBe(false);
+    expect(sendResponse).not.toHaveBeenCalled();
+
+    expect(handler(
+      "not an object",
+      {} as chrome.runtime.MessageSender,
+      sendResponse
+    )).toBe(false);
+    expect(sendResponse).not.toHaveBeenCalled();
+  });
+
+  it("assigns monotonic sequences to operations starting in the same millisecond", async () => {
+    vi.useFakeTimers();
+    const systemTime = 1000000;
+    vi.setSystemTime(systemTime);
+
+    const seenMessages: any[] = [];
+    const deps = dependencies({
+      sendToTab: vi.fn(async (_tabId, message) => {
+        seenMessages.push(message);
+        return { success: true, pageId: "page-2", bubbleCount: 1 };
+      }),
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    const promise1 = coordinator.translate(request);
+    await vi.advanceTimersByTimeAsync(0);
+    await promise1;
+
+    const promise2 = coordinator.translate(request);
+    await vi.advanceTimersByTimeAsync(0);
+    await promise2;
+
+    expect(seenMessages).toHaveLength(2);
+    expect(seenMessages[0].operationSequence).toBe(1);
+    expect(seenMessages[1].operationSequence).toBe(2);
+    expect(seenMessages[0].expiresAt).toBe(systemTime + deps.timeoutMs!);
+    expect(seenMessages[1].expiresAt).toBe(systemTime + deps.timeoutMs!);
+  });
+
+  it("times out exactly once while sendToTab is pending, and never causes a second popup response", async () => {
+    vi.useFakeTimers();
+    let resolveSendToTab!: (value: any) => void;
+    const sendToTabPromise = new Promise((resolve) => {
+      resolveSendToTab = resolve;
+    });
+
+    const sendToTabSpy = vi.fn(() => sendToTabPromise);
+    const deps = dependencies({
+      sendToTab: sendToTabSpy,
+      timeoutMs: 100,
+    });
+    const coordinator = new TranslationCoordinator(deps);
+    
+    const popupPromise = coordinator.translate(request);
+    
+    await vi.advanceTimersByTimeAsync(100);
+
+    const result = await popupPromise;
+    expect(result).toEqual({
+      success: false,
+      error: { code: "timeout" },
+    });
+
+    resolveSendToTab({
+      success: true,
+      pageId: "page-2",
+      bubbleCount: 1,
+    });
+
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(sendToTabSpy).toHaveBeenCalledTimes(1);
+    const sentMessage = (sendToTabSpy.mock.calls[0] as any)[1];
+    expect(sentMessage.type).toBe("APPLY_TRANSLATION_RESULT");
+  });
 });

@@ -31,11 +31,13 @@ describe("translation pipeline boundaries", () => {
 
   it("validates apply messages and rejects bad bubble data", () => {
     const message = {
-      type: "APPLY_TRANSLATION_RESULT",
-      contractVersion: 1,
+      type: "APPLY_TRANSLATION_RESULT" as const,
+      contractVersion: 1 as const,
       requestId: "request-1",
       pageId: "page-1",
       bubbles: [bubble],
+      expiresAt: 100000,
+      operationSequence: 1,
     };
     expect(validateApplyTranslationResultMessage(message)).toEqual(message);
     expect(validateApplyTranslationResultMessage({

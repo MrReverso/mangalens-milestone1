@@ -1,5 +1,6 @@
 import { CaptureFailure, captureErrorCode } from "@/lib/capture/capture-errors";
 import type { CapturedImage } from "@/types/capture";
+import { isRecord, isPositiveInteger } from "@/types/capture";
 import type {
   ApplyTranslationResultMessage,
   BackgroundTranslationResponse,
@@ -9,7 +10,8 @@ import type {
 } from "@/types/translation-pipeline";
 import {
   isApplyTranslationResultResponse,
-  isTranslateVisiblePageMessage,
+  isSourceLanguage,
+  isTargetLanguage,
 } from "@/types/translation-pipeline";
 import {
   validateTranslationApiRequestMetadata,
@@ -23,6 +25,8 @@ const DEFAULT_RETIREMENT_TIMEOUT_MS = 5_000;
 interface TranslationOperation {
   readonly controller: AbortController;
   retirementTimer: ReturnType<typeof setTimeout> | null;
+  readonly expiresAt: number;
+  readonly operationSequence: number;
 }
 
 export interface TranslationCoordinatorDependencies {
@@ -64,8 +68,34 @@ export function createBackgroundTranslationMessageHandler(
     _sender: chrome.runtime.MessageSender,
     sendResponse: (response: BackgroundTranslationResponse) => void
   ): boolean => {
-    if (!isTranslateVisiblePageMessage(message)) return false;
-    coordinator.translate(message).then(
+    if (!isRecord(message) || message.type !== "TRANSLATE_VISIBLE_PAGE_LOCAL") {
+      return false;
+    }
+
+    const { tabId, windowId, sourceLanguage, targetLanguage } = message;
+
+    if (!isPositiveInteger(tabId) || !isPositiveInteger(windowId)) {
+      sendResponse({
+        success: false,
+        error: { code: "restricted-page" },
+      });
+      return true;
+    }
+
+    const keys = ["type", "tabId", "windowId", "sourceLanguage", "targetLanguage"];
+    const hasAllowedKeys = Object.keys(message).every((key) => keys.includes(key)) &&
+      keys.every((key) => key in message);
+
+    if (!isSourceLanguage(sourceLanguage) || !isTargetLanguage(targetLanguage) || !hasAllowedKeys) {
+      sendResponse({
+        success: false,
+        error: { code: "invalid-language" },
+      });
+      return true;
+    }
+
+    const validMessage = message as unknown as TranslateVisiblePageMessage;
+    coordinator.translate(validMessage).then(
       sendResponse,
       () => sendResponse({
         success: false,
@@ -78,6 +108,7 @@ export function createBackgroundTranslationMessageHandler(
 
 export class TranslationCoordinator {
   private readonly operations = new Map<number, TranslationOperation>();
+  private readonly nextSequences = new Map<number, number>();
   private readonly timeoutMs: number;
   private readonly retirementTimeoutMs: number;
   private readonly createRequestId: () => string;
@@ -101,21 +132,33 @@ export class TranslationCoordinator {
         this.dependencies.isCaptureActive?.(request.tabId)) {
       return { success: false, error: { code: "translation-in-progress" } };
     }
+    const expiresAt = Date.now() + this.timeoutMs;
+    const operationSequence = this.nextSequences.get(request.tabId) ?? 1;
+    this.nextSequences.set(request.tabId, operationSequence + 1);
+
     const operation: TranslationOperation = {
       controller: new AbortController(),
       retirementTimer: null,
+      expiresAt,
+      operationSequence,
     };
     this.operations.set(request.tabId, operation);
 
-    const workflow = this.performTranslation(request, operation.controller.signal);
+    const workflow = this.performTranslation(
+      request,
+      operation.controller.signal,
+      expiresAt,
+      operationSequence
+    );
     const outcome = workflow.then(
       (response) => ({ kind: "success" as const, response }),
       (error: unknown) => ({ kind: "error" as const, error })
     ).finally(() => this.release(request.tabId, operation));
 
     let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+    const timeoutDelay = Math.max(0, expiresAt - Date.now());
     const timeout = new Promise<{ readonly kind: "timeout" }>((resolve) => {
-      timeoutTimer = setTimeout(() => resolve({ kind: "timeout" }), this.timeoutMs);
+      timeoutTimer = setTimeout(() => resolve({ kind: "timeout" }), timeoutDelay);
     });
     const first = await Promise.race([outcome, timeout]);
     if (timeoutTimer !== null) clearTimeout(timeoutTimer);
@@ -134,7 +177,9 @@ export class TranslationCoordinator {
 
   private async performTranslation(
     request: TranslateVisiblePageMessage,
-    signal: AbortSignal
+    signal: AbortSignal,
+    expiresAt: number,
+    operationSequence: number
   ): Promise<BackgroundTranslationResponse> {
     throwIfAborted(signal);
     await this.reportStage(request.tabId, "capturing");
@@ -195,6 +240,8 @@ export class TranslationCoordinator {
       requestId,
       pageId: response.pageId,
       bubbles: response.bubbles,
+      expiresAt,
+      operationSequence,
     });
     throwIfAborted(signal);
     if (!isApplyTranslationResultResponse(applyRaw)) {

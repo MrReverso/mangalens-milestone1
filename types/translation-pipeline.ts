@@ -24,6 +24,8 @@ export interface ApplyTranslationResultMessage {
   readonly requestId: string;
   readonly pageId: string;
   readonly bubbles: TranslationBubble[];
+  readonly expiresAt: number;
+  readonly operationSequence: number;
 }
 
 export type ApplyTranslationResultResponse =
@@ -128,9 +130,15 @@ export function validateApplyTranslationResultMessage(
 ): ApplyTranslationResultMessage | null {
   if (!isRecord(value) ||
       !hasOnlyKeys(value, [
-        "type", "contractVersion", "requestId", "pageId", "bubbles",
+        "type", "contractVersion", "requestId", "pageId", "bubbles", "expiresAt", "operationSequence",
       ]) ||
       value.type !== "APPLY_TRANSLATION_RESULT") {
+    return null;
+  }
+  if (typeof value.expiresAt !== "number" || !Number.isSafeInteger(value.expiresAt) || value.expiresAt <= 0) {
+    return null;
+  }
+  if (typeof value.operationSequence !== "number" || !Number.isSafeInteger(value.operationSequence) || value.operationSequence <= 0) {
     return null;
   }
   const validated = validateTranslationApiSuccessResponse({
@@ -140,7 +148,12 @@ export function validateApplyTranslationResultMessage(
     bubbles: value.bubbles,
   });
   return validated
-    ? { type: "APPLY_TRANSLATION_RESULT", ...validated }
+    ? {
+        type: "APPLY_TRANSLATION_RESULT",
+        expiresAt: value.expiresAt,
+        operationSequence: value.operationSequence,
+        ...validated,
+      }
     : null;
 }
 
