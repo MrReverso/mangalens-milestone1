@@ -8,6 +8,8 @@ import type { SourceLanguage, TargetLanguage } from "@/types/extension";
 import type { TranslationBubble } from "@/types/translation";
 import { validateTranslationApiSuccessResponse } from "@/types/translation-api";
 
+export type TranslationServiceMode = "local-demo" | "development-api";
+
 export type TranslationPipelineStage = "capturing" | "processing" | "applying";
 
 export interface TranslateVisiblePageMessage {
@@ -16,6 +18,7 @@ export interface TranslateVisiblePageMessage {
   readonly windowId: number;
   readonly sourceLanguage: SourceLanguage;
   readonly targetLanguage: TargetLanguage;
+  readonly serviceMode: TranslationServiceMode;
 }
 
 export interface ApplyTranslationResultMessage {
@@ -55,7 +58,15 @@ export type TranslationPipelineErrorCode =
   | "target-page-missing"
   | "target-page-disconnected"
   | "stale-translation-result"
-  | "apply-failed";
+  | "apply-failed"
+  | "backend-unavailable"
+  | "backend-request-failed"
+  | "backend-http-error"
+  | "backend-invalid-content-type"
+  | "backend-response-too-large"
+  | "backend-invalid-json"
+  | "backend-invalid-response"
+  | "backend-timeout";
 
 export type BackgroundTranslationResponse =
   | {
@@ -63,7 +74,8 @@ export type BackgroundTranslationResponse =
       readonly pageId: string;
       readonly pageNumber: number;
       readonly bubbleCount: number;
-      readonly localDemo: true;
+      readonly demo: true;
+      readonly serviceMode: TranslationServiceMode;
     }
   | {
       readonly success: false;
@@ -101,6 +113,14 @@ const PIPELINE_ERRORS = new Set<string>([
   "target-page-disconnected",
   "stale-translation-result",
   "apply-failed",
+  "backend-unavailable",
+  "backend-request-failed",
+  "backend-http-error",
+  "backend-invalid-content-type",
+  "backend-response-too-large",
+  "backend-invalid-json",
+  "backend-invalid-response",
+  "backend-timeout",
 ]);
 
 export function isSourceLanguage(value: unknown): value is SourceLanguage {
@@ -116,13 +136,14 @@ export function isTranslateVisiblePageMessage(
 ): value is TranslateVisiblePageMessage {
   return isRecord(value) &&
     hasOnlyKeys(value, [
-      "type", "tabId", "windowId", "sourceLanguage", "targetLanguage",
+      "type", "tabId", "windowId", "sourceLanguage", "targetLanguage", "serviceMode",
     ]) &&
     value.type === "TRANSLATE_VISIBLE_PAGE_LOCAL" &&
     isPositiveInteger(value.tabId) &&
     isPositiveInteger(value.windowId) &&
     isSourceLanguage(value.sourceLanguage) &&
-    isTargetLanguage(value.targetLanguage);
+    isTargetLanguage(value.targetLanguage) &&
+    (value.serviceMode === "local-demo" || value.serviceMode === "development-api");
 }
 
 export function validateApplyTranslationResultMessage(
@@ -186,14 +207,15 @@ export function isBackgroundTranslationResponse(
   if (!isRecord(value) || typeof value.success !== "boolean") return false;
   if (value.success) {
     return hasOnlyKeys(value, [
-      "success", "pageId", "pageNumber", "bubbleCount", "localDemo",
+      "success", "pageId", "pageNumber", "bubbleCount", "demo", "serviceMode",
     ]) &&
       isNonEmptyString(value.pageId) &&
       isPositiveInteger(value.pageNumber) &&
       Number.isInteger(value.bubbleCount) &&
       typeof value.bubbleCount === "number" &&
       value.bubbleCount >= 0 &&
-      value.localDemo === true;
+      value.demo === true &&
+      (value.serviceMode === "local-demo" || value.serviceMode === "development-api");
   }
   return hasOnlyKeys(value, ["success", "error"]) &&
     isRecord(value.error) &&

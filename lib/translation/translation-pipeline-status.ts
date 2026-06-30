@@ -24,6 +24,18 @@ export function translationPipelineErrorMessage(
       return "The translation result was invalid";
     case "timeout":
       return "Translation timed out";
+    case "backend-unavailable":
+      return "Development translation server is not running";
+    case "backend-timeout":
+      return "Development translation timed out";
+    case "backend-invalid-response":
+      return "Development server returned an invalid result";
+    case "backend-request-failed":
+    case "backend-http-error":
+    case "backend-invalid-content-type":
+    case "backend-response-too-large":
+    case "backend-invalid-json":
+      return "Development translation request failed";
     default:
       return "Translation failed";
   }

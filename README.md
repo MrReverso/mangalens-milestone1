@@ -285,6 +285,96 @@ mangalens/
 
 ## Important Note
 
-The translation preview is simulated with deterministic local strings and
-demonstration positions. No text recognition, real translation, AI, backend,
-inpainting, or image modification occurs.
+The translation preview is simulated with deterministic local strings and demonstration positions. No text recognition, real translation, AI, inpainting, or image modification occurs. The development API receives the real cropped PNG, but its translation text and bubble positions are fixed demo values and are not derived from the image content.
+
+---
+
+## Milestone 4A — Secure Development Backend Transport
+
+This milestone introduces a real loopback HTTP transport path connecting the background script to a local Node.js development server.
+
+### Local Demo vs. Development API Mode
+
+1. **Translate Visible Page (Local Demo)**
+   - Resolves to in-extension `LocalDeterministicTranslationService`.
+   - The cropped PNG remains entirely inside the background process memory.
+   - Generates demo bubbles in-extension.
+
+2. **Translate via Dev API (Development API)**
+   - Resolves to `HttpTranslationService` which sends a multipart request to the local server.
+   - Sends the real cropped PNG and request metadata.
+   - The local server validates the payload and returns deterministic mock bubbles.
+
+Both modes share the same capture engine, per-tab locking, timeout architecture, response validators, and transactional content application pathways.
+
+### Development API Origin
+
+- Origin: `http://127.0.0.1:8787`
+- Translation endpoint: `http://127.0.0.1:8787/v1/translate`
+- Health endpoint: `http://127.0.0.1:8787/health`
+
+*Note: All loopback endpoints are validated strictly on protocol, hostname, port, and query/credentials/fragment exclusion before request dispatching.*
+
+### Multipart Request Contract
+
+Dispatches one POST `multipart/form-data` request with two parts:
+1. `metadata` (filename: `metadata.json`, MIME type: `application/json`): Contains `TranslationApiRequestMetadata` JSON.
+2. `image` (filename: `page.png`, MIME type: `image/png`): Contains the cropped PNG Blob.
+
+*The request omits cookies, authorization headers, browser history, page/tab URLs, and extension configurations.*
+
+### Request and Response Limits
+
+- **Maximum request size**: ~21 MB
+- **Maximum image size**: ~20 MB
+- **Maximum metadata size**: ~64 KB
+- **Maximum response size**: ~256 KB (enforced via size-bounded stream reader without relying on `Content-Length`)
+- **Request timeout**: 10 seconds
+
+### Privacy Boundary
+
+- The cropped PNG is transmitted solely to the loopback endpoint `http://127.0.0.1:8787/v1/translate`.
+- The image data never enters the popup script, content script, local extension storage, logs, or any remote/internet hosts.
+- The development server processes the request entirely in memory and never persists the image (no disk writes, logging of body bytes, or caching).
+
+### Permission Changes
+
+Permissions are restricted to:
+- `storage`, `activeTab`, `scripting` (Standard permissions)
+- `host_permissions`: `['http://127.0.0.1:8787/*']` (Loopback host permission)
+
+---
+
+## How to Run and Test the Development Server
+
+### Terminal 1: Run the Backend
+```bash
+pnpm dev:backend
+```
+Expected output:
+```
+MangaLens development API listening on http://127.0.0.1:8787
+```
+
+### Terminal 2: Run the Extension Developer Mode
+```bash
+pnpm dev
+```
+
+### Manual Testing Steps
+
+1. Load the unpacked Chrome extension from `.output/chrome-mv3`.
+2. Open a supported page or fixture page.
+3. Click **Scan Manga Page**.
+4. Click **Translate via Dev API**.
+5. Observe progress messages: "Capturing Page...", "Processing Translation...", "Applying Translation...".
+6. Confirm three editable demo bubbles appear on the target page.
+7. Stop the development server (Terminal 1).
+8. Click **Translate via Dev API** again.
+9. Verify that the popup status bar displays: `Development translation server is not running`.
+
+---
+
+## Recommended Next Milestone
+- **Milestone 4B**: OCR provider integration behind the development API.
+

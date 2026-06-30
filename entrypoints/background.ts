@@ -11,6 +11,10 @@ import {
 } from "@/lib/translation/translation-coordinator";
 import { ChromeSessionSequenceStore } from "@/lib/translation/operation-sequence-store";
 
+import { HttpTranslationService } from "@/lib/translation/http-translation-service";
+
+const DEV_TRANSLATION_API_URL = "http://127.0.0.1:8787/v1/translate";
+
 export default defineBackground(() => {
   let translationCoordinator: TranslationCoordinator | null = null;
   const coordinator = new CaptureCoordinator({
@@ -30,7 +34,14 @@ export default defineBackground(() => {
   translationCoordinator = new TranslationCoordinator({
     captureImage: (request, signal) =>
       coordinator.captureImageForInternalUse(request, signal),
-    service: new LocalDeterministicTranslationService(),
+    services: {
+      "local-demo": new LocalDeterministicTranslationService(),
+      "development-api": new HttpTranslationService({
+        endpoint: DEV_TRANSLATION_API_URL,
+        fetchImpl: fetch,
+        maxResponseBytes: 256 * 1024,
+      }),
+    },
     sendToTab: (tabId, message) => chrome.tabs.sendMessage(tabId, message),
     nextOperationSequence: (tabId) => sequenceStore.next(tabId),
     reportStage: (tabId, stage) => {

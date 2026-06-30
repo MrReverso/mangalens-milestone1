@@ -24,4 +24,11 @@ AbortControllers.
 Captured image bytes must never cross extension message boundaries. Runtime
 validate every backend-style response, apply translation results through
 scanner-controller page sessions, and keep local/demo services deterministic.
-Network access requires an explicit future milestone and permission review.
+
+- Network access must be isolated behind TranslationService implementations.
+- Production endpoints require explicit permission and security review.
+- Never manually set multipart Content-Type.
+- Treat every backend response as unknown until runtime validation.
+- Never log or persist captured image payloads.
+- Development servers must bind to loopback only.
+- Redirects and credentials must remain disabled for translation transport.

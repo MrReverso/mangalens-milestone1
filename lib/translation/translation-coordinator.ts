@@ -19,6 +19,25 @@ import {
 } from "@/types/translation-api";
 import type { TranslationService } from "@/lib/translation/translation-service";
 
+import type {
+  TranslationServiceMode,
+} from "@/types/translation-pipeline";
+
+const BACKEND_ERRORS = new Set<string>([
+  "backend-unavailable",
+  "backend-request-failed",
+  "backend-http-error",
+  "backend-invalid-content-type",
+  "backend-response-too-large",
+  "backend-invalid-json",
+  "backend-invalid-response",
+  "backend-timeout",
+]);
+
+function isBackendErrorCode(code: string): boolean {
+  return BACKEND_ERRORS.has(code);
+}
+
 const DEFAULT_TIMEOUT_MS = 15_000;
 const DEFAULT_RETIREMENT_TIMEOUT_MS = 5_000;
 
@@ -37,7 +56,7 @@ export interface TranslationCoordinatorDependencies {
     },
     signal: AbortSignal
   ) => Promise<CapturedImage>;
-  readonly service: TranslationService;
+  readonly services: Record<TranslationServiceMode, TranslationService>;
   readonly sendToTab: (
     tabId: number,
     message: ApplyTranslationResultMessage
@@ -72,7 +91,7 @@ export function createBackgroundTranslationMessageHandler(
       return false;
     }
 
-    const { tabId, windowId, sourceLanguage, targetLanguage } = message;
+    const { tabId, windowId, sourceLanguage, targetLanguage, serviceMode } = message;
 
     if (!isPositiveInteger(tabId) || !isPositiveInteger(windowId)) {
       sendResponse({
@@ -82,11 +101,14 @@ export function createBackgroundTranslationMessageHandler(
       return true;
     }
 
-    const keys = ["type", "tabId", "windowId", "sourceLanguage", "targetLanguage"];
+    const keys = ["type", "tabId", "windowId", "sourceLanguage", "targetLanguage", "serviceMode"];
     const hasAllowedKeys = Object.keys(message).every((key) => keys.includes(key)) &&
       keys.every((key) => key in message);
 
-    if (!isSourceLanguage(sourceLanguage) || !isTargetLanguage(targetLanguage) || !hasAllowedKeys) {
+    if (!isSourceLanguage(sourceLanguage) ||
+        !isTargetLanguage(targetLanguage) ||
+        (serviceMode !== "local-demo" && serviceMode !== "development-api") ||
+        !hasAllowedKeys) {
       sendResponse({
         success: false,
         error: { code: "invalid-language" },
@@ -131,6 +153,14 @@ export class TranslationCoordinator {
         this.dependencies.isCaptureActive?.(request.tabId)) {
       return { success: false, error: { code: "translation-in-progress" } };
     }
+    if (request.serviceMode !== "local-demo" && request.serviceMode !== "development-api") {
+      return { success: false, error: { code: "unexpected-error" } };
+    }
+    const service = this.dependencies.services[request.serviceMode];
+    if (!service) {
+      return { success: false, error: { code: "unexpected-error" } };
+    }
+
     const expiresAt = Date.now() + this.timeoutMs;
 
     const operation: TranslationOperation = {
@@ -216,13 +246,17 @@ export class TranslationCoordinator {
     throwIfAborted(signal);
     let rawResponse: unknown;
     try {
-      rawResponse = await this.dependencies.service.translate({
+      const service = this.dependencies.services[request.serviceMode];
+      rawResponse = await service.translate({
         image: captured.blob,
         metadata,
       }, signal);
     } catch (error: unknown) {
       if (signal.aborted || isAbortError(error)) {
         throw new TranslationPipelineFailure("timeout");
+      }
+      if (error instanceof Error && isBackendErrorCode(error.message)) {
+        throw new TranslationPipelineFailure(error.message as TranslationPipelineErrorCode);
       }
       throw new TranslationPipelineFailure("translation-service-failed");
     }
@@ -263,7 +297,8 @@ export class TranslationCoordinator {
       pageId: response.pageId,
       pageNumber: metadata.pageNumber,
       bubbleCount: response.bubbles.length,
-      localDemo: true,
+      demo: true,
+      serviceMode: request.serviceMode,
     };
   }
 
