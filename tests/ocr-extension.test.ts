@@ -50,10 +50,10 @@ describe("OCR extension UX and privacy boundary", () => {
     expect(extension).not.toContain("GoogleAuth");
   });
 
-  it("keeps local deterministic mode free from network access", () => {
+  it("keeps local OCR mode free from network access", () => {
     const localService = fs.readFileSync(path.resolve(
       __dirname,
-      "../lib/translation/local-deterministic-translation-service.ts"
+      "../lib/translation/local-ocr-translation-service.ts"
     ), "utf8");
     expect(localService).not.toMatch(/\bfetch\s*\(/);
     expect(localService).not.toMatch(/vision\.googleapis\.com/);

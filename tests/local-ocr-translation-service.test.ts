@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
-import { LocalDeterministicTranslationService } from "@/lib/translation/local-deterministic-translation-service";
+import { LocalOcrTranslationService } from "@/lib/translation/local-ocr-translation-service";
 import type { TranslationApiRequestMetadata } from "@/types/translation-api";
 // @ts-ignore
 import Tesseract from "@/public/tesseract/tesseract.esm.min.js";
@@ -41,7 +41,7 @@ function metadata(
   };
 }
 
-describe("LocalDeterministicTranslationService", () => {
+describe("LocalOcrTranslationService", () => {
   const originalOffscreenCanvas = globalThis.OffscreenCanvas;
   const originalCreateImageBitmap = globalThis.createImageBitmap;
   const originalChrome = (globalThis as any).chrome;
@@ -130,7 +130,7 @@ describe("LocalDeterministicTranslationService", () => {
   });
 
   it("accepts a valid PNG and returns contract-matching bubbles", async () => {
-    const response = await new LocalDeterministicTranslationService(0).translate({
+    const response = await new LocalOcrTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
     }, new AbortController().signal);
@@ -143,7 +143,7 @@ describe("LocalDeterministicTranslationService", () => {
   });
 
   it("rejects non-PNG and empty images", async () => {
-    const service = new LocalDeterministicTranslationService(0);
+    const service = new LocalOcrTranslationService(0);
     await expect(service.translate({
       image: new Blob(["x"], { type: "image/jpeg" }),
       metadata: metadata(),
@@ -156,7 +156,7 @@ describe("LocalDeterministicTranslationService", () => {
   });
 
   it("is deterministic for identical inputs", async () => {
-    const service = new LocalDeterministicTranslationService(0);
+    const service = new LocalOcrTranslationService(0);
     const input = {
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
@@ -171,7 +171,7 @@ describe("LocalDeterministicTranslationService", () => {
       data: { text: "本当に大丈夫？" },
     });
 
-    const response = await new LocalDeterministicTranslationService(0).translate({
+    const response = await new LocalOcrTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata("ja"),
     }, new AbortController().signal) as { bubbles: any[] };
@@ -185,7 +185,7 @@ describe("LocalDeterministicTranslationService", () => {
       data: { text: "무엇을요?" },
     });
 
-    const response = await new LocalDeterministicTranslationService(0).translate({
+    const response = await new LocalOcrTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata("ko"),
     }, new AbortController().signal) as { bubbles: any[] };
@@ -199,7 +199,7 @@ describe("LocalDeterministicTranslationService", () => {
       data: { text: "你好吗？" },
     });
 
-    const response = await new LocalDeterministicTranslationService(0).translate({
+    const response = await new LocalOcrTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata("zh"),
     }, new AbortController().signal) as { bubbles: any[] };
@@ -213,7 +213,7 @@ describe("LocalDeterministicTranslationService", () => {
       data: { text: "Stay alert." },
     });
 
-    const response = await new LocalDeterministicTranslationService(0).translate({
+    const response = await new LocalOcrTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata("auto", "en"),
     }, new AbortController().signal) as { bubbles: any[] };
@@ -227,7 +227,7 @@ describe("LocalDeterministicTranslationService", () => {
       data: { text: "" },
     });
 
-    const service = new LocalDeterministicTranslationService(0);
+    const service = new LocalOcrTranslationService(0);
     await expect(service.translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
@@ -237,7 +237,7 @@ describe("LocalDeterministicTranslationService", () => {
   it("handles OCR engine initialization failure safely by throwing ocr-unavailable", async () => {
     vi.mocked(Tesseract.createWorker).mockRejectedValue(new Error("Failed to init worker"));
 
-    const service = new LocalDeterministicTranslationService(0);
+    const service = new LocalOcrTranslationService(0);
     await expect(service.translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
@@ -247,7 +247,7 @@ describe("LocalDeterministicTranslationService", () => {
   it("handles worker recognize failure safely by throwing ocr-unavailable", async () => {
     mockWorker.recognize.mockRejectedValue(new Error("Worker thread crashed"));
 
-    const service = new LocalDeterministicTranslationService(0);
+    const service = new LocalOcrTranslationService(0);
     await expect(service.translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
@@ -257,13 +257,14 @@ describe("LocalDeterministicTranslationService", () => {
   it("rejects an already-aborted signal", async () => {
     const controller = new AbortController();
     controller.abort();
-    await expect(new LocalDeterministicTranslationService().translate({
+    await expect(new LocalOcrTranslationService().translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
     }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
   });
 
   it("aborts immediately when recognize is pending and terminates the worker", async () => {
+    vi.useFakeTimers();
     let resolveRecognize: any;
     const pendingPromise = new Promise((resolve) => {
       resolveRecognize = resolve;
@@ -272,7 +273,7 @@ describe("LocalDeterministicTranslationService", () => {
     mockWorker.recognize.mockReturnValue(pendingPromise);
 
     const controller = new AbortController();
-    const service = new LocalDeterministicTranslationService(0);
+    const service = new LocalOcrTranslationService(0);
 
     const promise = service.translate({
       image: new Blob(["pixels"], { type: "image/png" }),
@@ -281,8 +282,10 @@ describe("LocalDeterministicTranslationService", () => {
 
     promise.catch(() => {});
 
-    // Let the event loop run to hit the recognize call
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    // Pump fake timers to progress to the recognize call
+    for (let i = 0; i < 20; i++) {
+      await vi.advanceTimersByTimeAsync(1);
+    }
 
     // Abort the operation
     controller.abort();
@@ -301,7 +304,7 @@ describe("LocalDeterministicTranslationService", () => {
     mockWorker.recognize.mockReturnValue(pendingPromise);
 
     const controller = new AbortController();
-    const service = new LocalDeterministicTranslationService(0);
+    const service = new LocalOcrTranslationService(0);
 
     const promise = service.translate({
       image: new Blob(["pixels"], { type: "image/png" }),
@@ -310,24 +313,110 @@ describe("LocalDeterministicTranslationService", () => {
 
     promise.catch(() => {});
 
-    // Advance time asynchronously to get past both abortableDelay and OCR timeout
+    // Pump fake timers to reach recognize
+    for (let i = 0; i < 20; i++) {
+      await vi.advanceTimersByTimeAsync(1);
+    }
+
+    // Advance time to trigger recognize timeout
     await vi.advanceTimersByTimeAsync(26000);
 
     await expect(promise).rejects.toThrow("ocr-timeout");
     expect(mockWorker.terminate).toHaveBeenCalled();
   });
 
+  it("createWorker remains pending, then AbortController aborts, then resolves and terminates late worker", async () => {
+    vi.useFakeTimers();
+    let resolveWorkerPromise: any;
+    const createWorkerPromise = new Promise((resolve) => {
+      resolveWorkerPromise = resolve;
+    });
+
+    vi.mocked(Tesseract.createWorker).mockReturnValue(createWorkerPromise as any);
+
+    const controller = new AbortController();
+    const service = new LocalOcrTranslationService(0);
+
+    const promise = service.translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata(),
+    }, controller.signal);
+
+    promise.catch(() => {});
+
+    // Pump fake timers to enter createWorker
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(1);
+    }
+
+    // Abort while createWorker is pending
+    controller.abort();
+
+    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+
+    // Late worker resolves
+    resolveWorkerPromise(mockWorker);
+
+    // Let the event loop execute callback
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(1);
+    }
+
+    // Verify late worker is terminated immediately
+    expect(mockWorker.terminate).toHaveBeenCalled();
+  });
+
+  it("createWorker remains pending until timeout, then resolves and terminates late worker", async () => {
+    vi.useFakeTimers();
+
+    let resolveWorkerPromise: any;
+    const createWorkerPromise = new Promise((resolve) => {
+      resolveWorkerPromise = resolve;
+    });
+
+    vi.mocked(Tesseract.createWorker).mockReturnValue(createWorkerPromise as any);
+
+    const controller = new AbortController();
+    const service = new LocalOcrTranslationService(0);
+
+    const promise = service.translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata(),
+    }, controller.signal);
+
+    promise.catch(() => {});
+
+    // Pump fake timers to reach createWorker
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(1);
+    }
+
+    // Advance time by 26 seconds to trigger timeout
+    await vi.advanceTimersByTimeAsync(26000);
+
+    await expect(promise).rejects.toThrow("ocr-timeout");
+
+    // Late worker resolves after timeout
+    resolveWorkerPromise(mockWorker);
+
+    // Let the event loop execute callback
+    for (let i = 0; i < 10; i++) {
+      await vi.advanceTimersByTimeAsync(1);
+    }
+
+    // Verify late worker is terminated immediately
+    expect(mockWorker.terminate).toHaveBeenCalled();
+  });
+
   it("contains no network client call in the entire module code (no-network guarantee)", async () => {
-    const filePath = path.resolve(__dirname, "../lib/translation/local-deterministic-translation-service.ts");
+    const filePath = path.resolve(__dirname, "../lib/translation/local-ocr-translation-service.ts");
     const source = fs.readFileSync(filePath, "utf8");
     
-    // Corrected no-network regex checks
     expect(source).not.toMatch(/\bfetch\s*\(/);
     expect(source).not.toMatch(/XMLHttpRequest|WebSocket|EventSource/);
   });
 
   it("groups nearby lines belonging to one dialogue block and normalizes coordinate bounds strictly", async () => {
-    // Two close vertical boxes (gap is 40px <= 8% of 1000 = 80px)
     mockBlocks = [
       { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
       { cStart: 110, cEnd: 190, rStart: 190, rEnd: 240 },
@@ -337,7 +426,7 @@ describe("LocalDeterministicTranslationService", () => {
       .mockResolvedValueOnce({ data: { text: "Line 1" } })
       .mockResolvedValueOnce({ data: { text: "Line 2" } });
 
-    const response = await new LocalDeterministicTranslationService(0).translate({
+    const response = await new LocalOcrTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
     }, new AbortController().signal) as { bubbles: any[] };
@@ -354,7 +443,6 @@ describe("LocalDeterministicTranslationService", () => {
   });
 
   it("keeps separate dialogue blocks separate", async () => {
-    // Two far boxes vertically (gap is 400px > 8% of 1000 = 80px)
     mockBlocks = [
       { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
       { cStart: 100, cEnd: 200, rStart: 550, rEnd: 600 },
@@ -364,7 +452,7 @@ describe("LocalDeterministicTranslationService", () => {
       .mockResolvedValueOnce({ data: { text: "Bubble A" } })
       .mockResolvedValueOnce({ data: { text: "Bubble B" } });
 
-    const response = await new LocalDeterministicTranslationService(0).translate({
+    const response = await new LocalOcrTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
     }, new AbortController().signal) as { bubbles: any[] };
@@ -382,7 +470,7 @@ describe("LocalDeterministicTranslationService", () => {
       .mockResolvedValueOnce({ data: { text: "Top Bubble" } })
       .mockResolvedValueOnce({ data: { text: "Bottom Bubble" } });
 
-    const response = await new LocalDeterministicTranslationService(0).translate({
+    const response = await new LocalOcrTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
     }, new AbortController().signal) as { bubbles: any[] };

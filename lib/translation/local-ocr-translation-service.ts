@@ -223,6 +223,23 @@ function groupTextRegions(
   return current;
 }
 
+async function ensureOffscreenDocument(): Promise<void> {
+  if (typeof chrome.runtime.getContexts === 'function') {
+    const contexts = await chrome.runtime.getContexts({
+      contextTypes: ['OFFSCREEN_DOCUMENT' as any]
+    });
+    if (contexts.length > 0) {
+      return;
+    }
+  }
+  
+  await chrome.offscreen.createDocument({
+    url: 'offscreen.html',
+    reasons: ['WORKERS' as any],
+    justification: 'Run local Tesseract OCR in a dedicated worker.'
+  });
+}
+
 async function runWithAbortAndTimeout<T>(
   task: () => Promise<T>,
   signal: AbortSignal,
@@ -235,9 +252,12 @@ async function runWithAbortAndTimeout<T>(
 
   let onAbort: () => void;
   let timer: any;
+  let settled = false;
 
   const abortPromise = new Promise<never>((_, reject) => {
     onAbort = () => {
+      if (settled) return;
+      settled = true;
       if (workerRef.worker) {
         workerRef.worker.terminate().catch(() => {});
         workerRef.worker = null;
@@ -249,6 +269,8 @@ async function runWithAbortAndTimeout<T>(
 
   const timeoutPromise = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
       if (workerRef.worker) {
         workerRef.worker.terminate().catch(() => {});
         workerRef.worker = null;
@@ -257,15 +279,30 @@ async function runWithAbortAndTimeout<T>(
     }, timeoutMs);
   });
 
+  const taskPromise = (async () => {
+    const res = await task();
+    if (settled) {
+      if (res && typeof (res as any).terminate === "function") {
+        (res as any).terminate().catch(() => {});
+      } else if (workerRef.worker) {
+        workerRef.worker.terminate().catch(() => {});
+        workerRef.worker = null;
+      }
+      throw new DOMException("Local translation cancelled", "AbortError");
+    }
+    settled = true;
+    return res;
+  })();
+
   try {
-    return await Promise.race([task(), abortPromise, timeoutPromise]);
+    return await Promise.race([taskPromise, abortPromise, timeoutPromise]);
   } finally {
     signal.removeEventListener("abort", onAbort!);
     clearTimeout(timer);
   }
 }
 
-export class LocalDeterministicTranslationService
+export class LocalOcrTranslationService
 implements TranslationService {
   constructor(private readonly delayMs = 120) {}
 
@@ -273,17 +310,96 @@ implements TranslationService {
     input: LocalTranslationInput,
     signal: AbortSignal
   ): Promise<unknown> {
-    throwIfAborted(signal);
+    if (signal.aborted) {
+      throw new DOMException("Local translation cancelled", "AbortError");
+    }
     if (input.image.type !== "image/png" || input.image.size <= 0) {
       throw new Error("invalid-image");
     }
     const metadata = validateTranslationApiRequestMetadata(input.metadata);
     if (!metadata) throw new Error("invalid-metadata");
     await abortableDelay(this.delayMs, signal);
-    throwIfAborted(signal);
+    if (signal.aborted) {
+      throw new DOMException("Local translation cancelled", "AbortError");
+    }
 
+    const isServiceWorker =
+      typeof chrome !== 'undefined' &&
+      typeof chrome.offscreen !== 'undefined' &&
+      typeof window === 'undefined';
+
+    if (isServiceWorker) {
+      // Background SW delegates to offscreen document
+      const buffer = await input.image.arrayBuffer();
+      const bytes = new Uint8Array(buffer);
+      let binary = '';
+      for (let i = 0; i < bytes.byteLength; i++) {
+        binary += String.fromCharCode(bytes[i]);
+      }
+      const base64 = btoa(binary);
+      const dataUrl = `data:${input.image.type};base64,${base64}`;
+
+      await ensureOffscreenDocument();
+
+      let onAbort: () => void;
+      let timer: any;
+      let settled = false;
+
+      const abortPromise = new Promise<never>((_, reject) => {
+        onAbort = () => {
+          if (settled) return;
+          settled = true;
+          chrome.runtime.sendMessage({
+            target: 'offscreen-ocr',
+            action: 'abort',
+            requestId: metadata.requestId,
+          }).catch(() => {});
+          reject(new DOMException("Local translation cancelled", "AbortError"));
+        };
+        signal.addEventListener("abort", onAbort);
+      });
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          if (settled) return;
+          settled = true;
+          chrome.runtime.sendMessage({
+            target: 'offscreen-ocr',
+            action: 'abort',
+            requestId: metadata.requestId,
+          }).catch(() => {});
+          reject(new Error("ocr-timeout"));
+        }, 25000);
+      });
+
+      const scanPromise = (async () => {
+        const resp: any = await chrome.runtime.sendMessage({
+          target: 'offscreen-ocr',
+          action: 'scan',
+          requestId: metadata.requestId,
+          imageBase64: dataUrl,
+          metadata,
+        });
+        if (settled) throw new DOMException("Local translation cancelled", "AbortError");
+        settled = true;
+        if (!resp || !resp.success) {
+          throw new Error(resp?.error || 'ocr-unavailable');
+        }
+        return resp.result;
+      })();
+
+      try {
+        return await Promise.race([scanPromise, abortPromise, timeoutPromise]);
+      } finally {
+        signal.removeEventListener("abort", onAbort!);
+        clearTimeout(timer);
+      }
+    }
+
+    // Offscreen document or Test Context runs Tesseract locally
     let imageBitmap: ImageBitmap | null = null;
     const workerRef = { worker: null as any };
+
     try {
       try {
         imageBitmap = await createImageBitmap(input.image);
@@ -291,7 +407,9 @@ implements TranslationService {
         throw new Error("invalid-image");
       }
 
-      throwIfAborted(signal);
+      if (signal.aborted) {
+        throw new DOMException("Local translation cancelled", "AbortError");
+      }
 
       if (typeof OffscreenCanvas === "undefined") {
         throw new Error("ocr-unavailable");
@@ -308,20 +426,25 @@ implements TranslationService {
         throw new Error("ocr-no-text");
       }
 
-      throwIfAborted(signal);
+      if (signal.aborted) {
+        throw new DOMException("Local translation cancelled", "AbortError");
+      }
 
       const tessLangs = mapLanguage(metadata.sourceLanguage);
 
+      // Create worker using the wrapper
       try {
         await runWithAbortAndTimeout(
           async () => {
-            workerRef.worker = await Tesseract.createWorker(tessLangs, 1, {
+            const w = await Tesseract.createWorker(tessLangs, 1, {
               workerPath: chrome.runtime.getURL('tesseract/worker.min.js'),
               corePath: chrome.runtime.getURL('tesseract/'),
               langPath: chrome.runtime.getURL('tesseract/lang'),
               workerBlobURL: false,
               gzip: false,
             });
+            workerRef.worker = w;
+            return w;
           },
           signal,
           25000,
@@ -334,12 +457,16 @@ implements TranslationService {
         throw new Error("ocr-unavailable");
       }
 
-      throwIfAborted(signal);
+      if (signal.aborted) {
+        throw new DOMException("Local translation cancelled", "AbortError");
+      }
 
       const recognizedRegions: TempRegion[] = [];
 
       for (const box of rawBoxes) {
-        throwIfAborted(signal);
+        if (signal.aborted) {
+          throw new DOMException("Local translation cancelled", "AbortError");
+        }
 
         const cropCanvas = new OffscreenCanvas(box.width, box.height);
         const cropCtx = cropCanvas.getContext("2d");
@@ -360,13 +487,15 @@ implements TranslationService {
         );
 
         const cropBlob = await cropCanvas.convertToBlob({ type: "image/png" });
-        throwIfAborted(signal);
+        if (signal.aborted) {
+          throw new DOMException("Local translation cancelled", "AbortError");
+        }
 
         let ocrResult: any;
         try {
-          await runWithAbortAndTimeout(
+          ocrResult = await runWithAbortAndTimeout(
             async () => {
-              ocrResult = await workerRef.worker.recognize(cropBlob);
+              return await workerRef.worker.recognize(cropBlob);
             },
             signal,
             25000,
@@ -379,7 +508,9 @@ implements TranslationService {
           throw new Error("ocr-unavailable");
         }
         
-        throwIfAborted(signal);
+        if (signal.aborted) {
+          throw new DOMException("Local translation cancelled", "AbortError");
+        }
 
         const text = ocrResult.data.text.trim();
         if (text) {
@@ -397,7 +528,9 @@ implements TranslationService {
         throw new Error("ocr-no-text");
       }
 
-      throwIfAborted(signal);
+      if (signal.aborted) {
+        throw new DOMException("Local translation cancelled", "AbortError");
+      }
 
       const grouped = groupTextRegions(
         recognizedRegions,
@@ -438,19 +571,10 @@ implements TranslationService {
         bubbles: sortedBubbles,
       };
     } finally {
-      if (imageBitmap && typeof imageBitmap.close === "function") {
-        imageBitmap.close();
-      }
       if (workerRef.worker) {
         await workerRef.worker.terminate().catch(() => {});
       }
     }
-  }
-}
-
-function throwIfAborted(signal: AbortSignal): void {
-  if (signal.aborted) {
-    throw new DOMException("Local translation cancelled", "AbortError");
   }
 }
 

@@ -16,7 +16,7 @@ describe("Extension Permissions", () => {
       .map((p) => p.replace(/['"\s]/g, ""))
       .filter(Boolean);
 
-    expect(permissions).toEqual(["storage", "activeTab", "scripting"]);
+    expect(permissions).toEqual(["storage", "activeTab", "scripting", "offscreen"]);
 
     expect(hostPermissionsMatch).not.toBeNull();
     const hostPermissions = hostPermissionsMatch![1]
