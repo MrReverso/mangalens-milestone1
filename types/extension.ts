@@ -31,11 +31,13 @@ export const TARGET_LANGUAGE_OPTIONS: ReadonlyArray<{
 export interface UserSettings {
   sourceLanguage: SourceLanguage;
   targetLanguage: TargetLanguage;
+  translationsVisible: boolean;
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
   sourceLanguage: "auto",
   targetLanguage: "en",
+  translationsVisible: true,
 };
 
 // ── Detected Image ─────────────────────────────────────────────

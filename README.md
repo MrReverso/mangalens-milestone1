@@ -1,8 +1,34 @@
-# MangaLens — Milestone 1: Extension Foundation & Manga Image Detection
+# MangaLens — Milestone 2A: Local Mock Translation Overlays
 
-MangaLens is a browser extension for translating manga, manhwa, and webtoons directly on websites. This milestone implements the extension foundation and manga page image detection — no translation or backend functionality is included yet.
+MangaLens is a browser extension prototype for manga, manhwa, and webtoon
+translation experiences. Milestone 2A preserves manga-page detection and adds a
+fully local, deterministic mock translation preview. It does not perform real
+translation.
 
-## What Milestone 1 Does
+## What Milestone 2A Adds
+
+- Processes detected pages one at a time through a local mock queue
+- Places two simulated translated speech bubbles over every detected page
+- Shows translation progress in the popup
+- Hides and shows completed bubbles without discarding results
+- Clears translation previews separately from detected page markers
+- Uses deterministic demo text for English, Spanish, Portuguese, French,
+  Italian, and German
+
+Mock bubble locations are fixed demonstration coordinates. They are not
+detected from real speech bubbles.
+
+## Using the Mock Translation Preview
+
+1. Scan a supported web page with **Scan Manga Page**.
+2. Click **Preview Translation** after one or more pages are detected.
+3. Watch the translated-page count update while pages process serially.
+4. Toggle **Show translations** to hide or restore the existing overlays.
+5. Click **Clear Translations** to cancel processing and remove only translation
+   bubbles.
+6. Click **Clear Page Markers** to fully reset detection and translations.
+
+## Preserved Milestone 1 Foundation
 
 - Opens a compact popup (360 px wide) with a dark navy UI and teal accent
 - Lets the user select a source language and target language (persisted via `chrome.storage.local`)
@@ -16,7 +42,10 @@ MangaLens is a browser extension for translating manga, manhwa, and webtoons dir
 
 ## Current Limitations
 
-- **No translation, OCR, AI model calls, or backend APIs are implemented.**
+- **All translations and bubble positions are mocked locally.**
+- **No OCR, real translation, AI model calls, API requests, backend, or image
+  processing is implemented.**
+- Translation bubbles are not editable in Milestone 2A.
 - Detection relies on image size heuristics (rendered and natural dimensions). Some non-manga images may be detected, and some manga images may be missed depending on the site's layout.
 - The content script is injected programmatically using `activeTab` + `scripting` permissions — it is only injected after the user interacts with the extension popup.
 - Only Chrome is tested in this milestone (Firefox and Edge support is planned for future milestones).
@@ -58,7 +87,9 @@ pnpm test
 
 Tests use Vitest with jsdom and cover image detection, fixed-overlay positioning,
 nested scrolling, clear/rescan behavior, lazy loading, duplicate prevention, and
-removed-image cleanup.
+removed-image cleanup. Milestone 2A tests additionally cover deterministic mock
+translations, normalized coordinate validation, serial queue behavior,
+cancellation, visibility, translation positioning, and complete cleanup.
 
 GitHub Actions runs the install, compile, test, and production-build checks on
 every push and pull request.
@@ -103,13 +134,19 @@ mangalens/
 │   └── LanguageSelect.module.css
 ├── lib/
 │   ├── image-detector.ts    # Manga image detection logic
-│   ├── overlay-manager.ts   # Visual marker overlay management
+│   ├── image-position.ts    # Normalized-to-viewport coordinate mapping
+│   ├── mock-translation-provider.ts # Deterministic local mock results
+│   ├── overlay-manager.ts   # Numbered page marker management
+│   ├── scanner-controller.ts # Page sessions and scan/translation orchestration
+│   ├── translation-overlay-manager.ts # Mock speech-bubble rendering
+│   ├── translation-queue.ts # One-page-at-a-time processing
 │   ├── messages.ts          # Typed message definitions
 │   └── storage.ts           # chrome.storage.local utility
 ├── types/
-│   └── extension.ts         # Shared types and constants
+│   ├── extension.ts         # Shared extension types and constants
+│   └── translation.ts       # Translation and normalized-coordinate models
 ├── tests/
-│   └── image-detector.test.ts  # Unit tests for detection logic
+│   └── *.test.ts            # Detection, overlay, queue, and controller tests
 ├── public/
 │   └── icon/                # Extension icons (16–128 px)
 ├── wxt.config.ts            # WXT and manifest configuration
@@ -118,6 +155,8 @@ mangalens/
 └── package.json
 ```
 
-## Note
+## Important Note
 
-**Translation is not implemented.** This milestone only detects manga page images and places visual markers. No text recognition, translation, inpainting, or image modification occurs.
+The translation preview is simulated with deterministic local strings and
+demonstration positions. No text recognition, real translation, AI, backend,
+inpainting, or image modification occurs.

@@ -3,15 +3,40 @@ import type {
   ExtensionMessage,
   ScanPageResponse,
   ScanStatusResponse,
+  TranslationCommandResponse,
+  TranslationStatusResponse,
 } from "@/lib/messages";
+import { isImageVisible } from "@/lib/image-position";
+import { MockTranslationProvider } from "@/lib/mock-translation-provider";
 import { OverlayManager } from "@/lib/overlay-manager";
+import { TranslationOverlayManager } from "@/lib/translation-overlay-manager";
+import { TranslationQueue } from "@/lib/translation-queue";
+import type {
+  PageTranslation,
+  TranslatePageResult,
+  TranslationProvider,
+} from "@/types/translation";
+import type { SourceLanguage, TargetLanguage } from "@/types/extension";
 
-type ScannerResponse = ScanPageResponse | ScanStatusResponse;
+type ScannerResponse =
+  | ScanPageResponse
+  | ScanStatusResponse
+  | TranslationCommandResponse
+  | TranslationStatusResponse;
 type SendResponse = (response: ScannerResponse) => void;
+
+interface PageSession extends PageTranslation {
+  readonly element: HTMLImageElement;
+}
 
 export class MangaScannerController {
   private readonly overlay = new OverlayManager();
+  private readonly translationOverlay: TranslationOverlayManager;
+  private readonly translationQueue = new TranslationQueue<TranslatePageResult>();
+  private readonly translationProvider: TranslationProvider;
   private registeredElements = new WeakSet<HTMLImageElement>();
+  private pageByElement = new WeakMap<HTMLImageElement, PageSession>();
+  private readonly pages = new Map<string, PageSession>();
   private readonly pendingLoadListeners = new Map<
     HTMLImageElement,
     EventListener
@@ -19,6 +44,16 @@ export class MangaScannerController {
   private currentPageNumber = 0;
   private isScanning = false;
   private domObserver: MutationObserver | null = null;
+  private translationsVisible = true;
+  private nextPageId = 1;
+
+  constructor(
+    translationProvider: TranslationProvider = new MockTranslationProvider(),
+    translationOverlay = new TranslationOverlayManager()
+  ) {
+    this.translationProvider = translationProvider;
+    this.translationOverlay = translationOverlay;
+  }
 
   readonly messageHandler = (
     message: ExtensionMessage,
@@ -35,6 +70,25 @@ export class MangaScannerController {
       case "GET_SCAN_STATUS":
         this.getScanStatus(sendResponse);
         return false;
+      case "START_MOCK_TRANSLATION":
+        this.startMockTranslation(
+          message.sourceLanguage,
+          message.targetLanguage,
+          sendResponse
+        );
+        return false;
+      case "SET_TRANSLATIONS_VISIBLE":
+        this.setTranslationsVisible(message.visible, sendResponse);
+        return false;
+      case "CLEAR_TRANSLATIONS":
+        this.clearTranslations(sendResponse);
+        return false;
+      case "GET_TRANSLATION_STATUS":
+        sendResponse(this.translationStatus());
+        return false;
+      default:
+        sendResponse({ success: false, error: "Unknown command" });
+        return false;
     }
   };
 
@@ -46,6 +100,8 @@ export class MangaScannerController {
     chrome.runtime.onMessage.removeListener(this.messageHandler);
     this.stopLazyObserver();
     this.removePendingLoadListeners();
+    this.resetTranslations();
+    this.pages.clear();
     this.overlay.clearAll();
   }
 
@@ -64,6 +120,15 @@ export class MangaScannerController {
 
     this.registeredElements.add(img);
     this.currentPageNumber++;
+    const session: PageSession = {
+      pageId: `mangalens-page-${this.nextPageId++}`,
+      pageNumber: this.currentPageNumber,
+      element: img,
+      status: "detected",
+      bubbles: [],
+    };
+    this.pageByElement.set(img, session);
+    this.pages.set(session.pageId, session);
     this.overlay.addMarker({
       element: img,
       pageNumber: this.currentPageNumber,
@@ -107,9 +172,13 @@ export class MangaScannerController {
     try {
       this.stopLazyObserver();
       this.removePendingLoadListeners();
+      this.resetTranslations();
       this.overlay.clearAll();
       this.registeredElements = new WeakSet<HTMLImageElement>();
+      this.pageByElement = new WeakMap<HTMLImageElement, PageSession>();
+      this.pages.clear();
       this.currentPageNumber = 0;
+      this.nextPageId = 1;
       sendResponse({ success: true, detectedImages: 0 });
     } catch (error: unknown) {
       sendResponse({
@@ -209,6 +278,96 @@ export class MangaScannerController {
   private removeImage(img: HTMLImageElement): void {
     this.removePendingLoadListener(img);
     this.overlay.removeMarker(img);
+    const page = this.pageByElement.get(img);
+    if (page) {
+      this.translationQueue.cancel(page.pageId);
+      this.translationOverlay.removePage(page.pageId);
+      this.pages.delete(page.pageId);
+      this.pageByElement.delete(img);
+    }
     this.registeredElements.delete(img);
+  }
+
+  private startMockTranslation(
+    sourceLanguage: SourceLanguage,
+    targetLanguage: TargetLanguage,
+    sendResponse: SendResponse
+  ): void {
+    const candidates = [...this.pages.values()]
+      .filter((page) => page.status === "detected" || page.status === "error")
+      .sort((a, b) => {
+        const visibleDifference =
+          Number(isImageVisible(b.element)) - Number(isImageVisible(a.element));
+        return visibleDifference || a.pageNumber - b.pageNumber;
+      });
+
+    for (const page of candidates) {
+      page.status = "queued";
+      page.error = undefined;
+      this.translationQueue.enqueue({
+        pageId: page.pageId,
+        onStart: () => {
+          page.status = "translating";
+        },
+        run: (signal) => this.translationProvider.translatePage({
+          pageId: page.pageId,
+          pageNumber: page.pageNumber,
+          sourceLanguage,
+          targetLanguage,
+        }, signal),
+        onComplete: (result) => {
+          if (!this.pages.has(page.pageId)) return;
+          page.status = "complete";
+          page.bubbles = result.bubbles;
+          this.translationOverlay.renderPage(
+            page.pageId,
+            page.element,
+            page.bubbles
+          );
+        },
+        onError: (error) => {
+          page.status = "error";
+          page.error = error.message;
+        },
+      });
+    }
+    sendResponse({ success: true, status: this.translationStatus() });
+  }
+
+  private setTranslationsVisible(
+    visible: boolean,
+    sendResponse: SendResponse
+  ): void {
+    this.translationsVisible = visible;
+    this.translationOverlay.setVisible(visible);
+    sendResponse({ success: true, status: this.translationStatus() });
+  }
+
+  private clearTranslations(sendResponse: SendResponse): void {
+    this.resetTranslations();
+    sendResponse({ success: true, status: this.translationStatus() });
+  }
+
+  private resetTranslations(): void {
+    this.translationQueue.clear();
+    this.translationOverlay.clear();
+    for (const page of this.pages.values()) {
+      page.status = "detected";
+      page.bubbles = [];
+      page.error = undefined;
+    }
+  }
+
+  private translationStatus(): TranslationStatusResponse {
+    const pages = [...this.pages.values()];
+    return {
+      type: "TRANSLATION_STATUS",
+      totalPages: pages.length,
+      queuedPages: pages.filter((page) => page.status === "queued").length,
+      translatingPages: pages.filter((page) => page.status === "translating").length,
+      completedPages: pages.filter((page) => page.status === "complete").length,
+      failedPages: pages.filter((page) => page.status === "error").length,
+      translationsVisible: this.translationsVisible,
+    };
   }
 }

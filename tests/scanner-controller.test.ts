@@ -4,7 +4,34 @@ import type {
   ExtensionMessage,
   ScanPageResponse,
   ScanStatusResponse,
+  TranslationCommandResponse,
+  TranslationStatusResponse,
 } from "@/lib/messages";
+import type {
+  TranslatePageInput,
+  TranslatePageResult,
+  TranslationProvider,
+} from "@/types/translation";
+
+class ImmediateProvider implements TranslationProvider {
+  calls: TranslatePageInput[] = [];
+
+  translatePage(
+    input: TranslatePageInput,
+    _signal: AbortSignal
+  ): Promise<TranslatePageResult> {
+    this.calls.push(input);
+    return Promise.resolve({
+      pageId: input.pageId,
+      bubbles: [{
+        id: `${input.pageId}-bubble-1`,
+        bounds: { x: 0.1, y: 0.1, width: 0.3, height: 0.1 },
+        originalText: "Mock original",
+        translatedText: "Mock translated",
+      }],
+    });
+  }
+}
 
 class ResizeObserverMock {
   static instances: ResizeObserverMock[] = [];
@@ -33,8 +60,10 @@ function createMangaImage(loaded = true): HTMLImageElement {
 function send(
   controller: MangaScannerController,
   message: ExtensionMessage
-): ScanPageResponse | ScanStatusResponse {
-  let response: ScanPageResponse | ScanStatusResponse | undefined;
+): ScanPageResponse | ScanStatusResponse | TranslationCommandResponse |
+  TranslationStatusResponse {
+  let response: ScanPageResponse | ScanStatusResponse |
+    TranslationCommandResponse | TranslationStatusResponse | undefined;
   controller.messageHandler(
     message,
     {} as chrome.runtime.MessageSender,
@@ -50,6 +79,8 @@ describe("MangaScannerController", () => {
   beforeEach(() => {
     ResizeObserverMock.instances = [];
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    vi.stubGlobal("requestAnimationFrame", vi.fn(() => 1));
+    vi.stubGlobal("cancelAnimationFrame", vi.fn());
     vi.stubGlobal("chrome", {
       runtime: {
         onMessage: {
@@ -64,11 +95,13 @@ describe("MangaScannerController", () => {
       opacity: "1",
     } as CSSStyleDeclaration);
     document.querySelector("[data-mangalens-root]")?.remove();
+    document.querySelector("[data-mangalens-translation-root]")?.remove();
     document.body.replaceChildren();
   });
 
   afterEach(() => {
     document.querySelector("[data-mangalens-root]")?.remove();
+    document.querySelector("[data-mangalens-translation-root]")?.remove();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
@@ -145,6 +178,161 @@ describe("MangaScannerController", () => {
       detectedImages: 0,
     });
     expect(ResizeObserverMock.instances[0]?.unobserve).toHaveBeenCalledWith(image);
+    controller.destroy();
+  });
+
+  it("prioritizes a visible page before an earlier offscreen page", () => {
+    const offscreen = createMangaImage();
+    const visible = createMangaImage();
+    vi.mocked(offscreen.getBoundingClientRect).mockReturnValue(
+      new DOMRect(0, 2000, 800, 1200)
+    );
+    vi.mocked(visible.getBoundingClientRect).mockReturnValue(
+      new DOMRect(0, 20, 800, 1200)
+    );
+    document.body.append(offscreen, visible);
+    const calls: number[] = [];
+    const provider: TranslationProvider = {
+      translatePage: (input) => {
+        calls.push(input.pageNumber);
+        return new Promise<TranslatePageResult>(() => undefined);
+      },
+    };
+    const controller = new MangaScannerController(provider);
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    });
+    expect(calls).toEqual([2]);
+    controller.destroy();
+  });
+
+  it("repeated preview clicks do not duplicate completed bubbles", async () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    const provider = new ImmediateProvider();
+    const controller = new MangaScannerController(provider);
+    send(controller, { type: "SCAN_PAGE" });
+    const preview = {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    } as const;
+    send(controller, preview);
+    await Promise.resolve();
+    await Promise.resolve();
+    send(controller, preview);
+    expect(provider.calls).toHaveLength(1);
+    expect(document.querySelectorAll(".mangalens-translation-bubble"))
+      .toHaveLength(1);
+    controller.destroy();
+  });
+
+  it("show and hide preserves completed translation results", async () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    const controller = new MangaScannerController(new ImmediateProvider());
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "it",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    send(controller, { type: "SET_TRANSLATIONS_VISIBLE", visible: false });
+    send(controller, { type: "SET_TRANSLATIONS_VISIBLE", visible: true });
+    expect(document.querySelectorAll(".mangalens-translation-bubble"))
+      .toHaveLength(1);
+    expect(send(controller, { type: "GET_TRANSLATION_STATUS" })).toMatchObject({
+      completedPages: 1,
+      translationsVisible: true,
+    });
+    controller.destroy();
+  });
+
+  it("removing an image aborts its translation and removes its session", async () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    let activeSignal: AbortSignal | undefined;
+    const provider: TranslationProvider = {
+      translatePage: (_input, signal) => {
+        activeSignal = signal;
+        return new Promise<TranslatePageResult>(() => undefined);
+      },
+    };
+    const controller = new MangaScannerController(provider);
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    });
+    image.remove();
+    await new Promise<void>((resolve) => queueMicrotask(resolve));
+    expect(activeSignal?.aborted).toBe(true);
+    expect(send(controller, { type: "GET_TRANSLATION_STATUS" }))
+      .toMatchObject({ totalPages: 0 });
+    expect(document.querySelectorAll(".mangalens-translation-bubble"))
+      .toHaveLength(0);
+    controller.destroy();
+  });
+
+  it("clear translations aborts work but preserves page markers", () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    let activeSignal: AbortSignal | undefined;
+    const provider: TranslationProvider = {
+      translatePage: (_input, signal) => {
+        activeSignal = signal;
+        return new Promise<TranslatePageResult>(() => undefined);
+      },
+    };
+    const controller = new MangaScannerController(provider);
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    });
+    send(controller, { type: "CLEAR_TRANSLATIONS" });
+    expect(activeSignal?.aborted).toBe(true);
+    expect(document.querySelectorAll(".mangalens-marker")).toHaveLength(1);
+    expect(send(controller, { type: "GET_TRANSLATION_STATUS" }))
+      .toMatchObject({
+        totalPages: 1,
+        queuedPages: 0,
+        translatingPages: 0,
+        completedPages: 0,
+      });
+    controller.destroy();
+  });
+
+  it("full clear permits rescan and preview again", async () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    const provider = new ImmediateProvider();
+    const controller = new MangaScannerController(provider);
+    const preview = {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    } as const;
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, preview);
+    await Promise.resolve();
+    await Promise.resolve();
+    send(controller, { type: "CLEAR_MARKERS" });
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, preview);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(provider.calls).toHaveLength(2);
+    expect(document.querySelectorAll(".mangalens-marker")).toHaveLength(1);
+    expect(document.querySelectorAll(".mangalens-translation-bubble"))
+      .toHaveLength(1);
     controller.destroy();
   });
 });

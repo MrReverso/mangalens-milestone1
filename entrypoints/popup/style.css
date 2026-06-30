@@ -166,6 +166,20 @@ body {
   color: var(--text-primary);
 }
 
+.translation-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 2px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.translation-toggle input {
+  accent-color: var(--accent);
+}
+
 /* ── Status ──────────────────────────────────────────────────── */
 
 .status-bar {
