@@ -223,3 +223,19 @@ body {
   background: var(--border);
   margin: 0 18px;
 }
+
+.btn-desc {
+  display: block;
+  font-size: 10.5px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  margin-bottom: 8px;
+  line-height: 1.35;
+  text-align: left;
+  padding: 0 2px;
+}
+
+.action-group {
+  margin-bottom: 6px;
+}
+

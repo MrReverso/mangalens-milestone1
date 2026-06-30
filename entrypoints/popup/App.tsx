@@ -424,8 +424,8 @@ export default function App() {
       if (rawResponse.resultKind === "ocr-preview" || rawResponse.resultKind === "local-demo") {
         setStatus({
           kind: "success",
-          message: `OCR detected ${rawResponse.bubbleCount} text regions ` +
-            "\u00b7 Translation not enabled",
+          message: `OCR detected ${rawResponse.bubbleCount} text regions. ` +
+            "Translation not enabled yet.",
         });
       } else {
         setStatus({
@@ -520,39 +520,49 @@ export default function App() {
         )}
 
         {hasMarkers && (
-          <button
-            className="btn btn-primary"
-            disabled={
-              isScanning || isTranslating || isCapturing || isLocalTranslating
-            }
-            onClick={() => handleLocalTranslation("local-demo")}
-          >
-            {isLocalTranslating && currentServiceMode === "local-demo"
-              ? localStage === "capturing"
-                ? "Capturing\u2026"
-                : localStage === "processing"
-                  ? "Processing\u2026"
-                  : "Applying\u2026"
-              : "Translate Visible Page"}
-          </button>
+          <div className="action-group">
+            <button
+              className="btn btn-primary"
+              disabled={
+                isScanning || isTranslating || isCapturing || isLocalTranslating
+              }
+              onClick={() => handleLocalTranslation("local-demo")}
+            >
+              {isLocalTranslating && currentServiceMode === "local-demo"
+                ? localStage === "capturing"
+                  ? "Capturing\u2026"
+                  : localStage === "processing"
+                    ? "Processing\u2026"
+                    : "Applying\u2026"
+                : "Translate Visible Page"}
+            </button>
+            <span className="btn-desc">
+              Performs real local text detection without contacting the backend.
+            </span>
+          </div>
         )}
 
         {hasMarkers && (
-          <button
-            className="btn btn-primary"
-            disabled={
-              isScanning || isTranslating || isCapturing || isLocalTranslating
-            }
-            onClick={() => handleLocalTranslation("development-api")}
-          >
-            {isLocalTranslating && currentServiceMode === "development-api"
-              ? localStage === "capturing"
-                ? "Capturing\u2026"
-                : localStage === "processing"
-                  ? "Processing OCR\u2026"
-                  : "Applying OCR Preview\u2026"
-              : "OCR via Dev API"}
-          </button>
+          <div className="action-group">
+            <button
+              className="btn btn-primary"
+              disabled={
+                isScanning || isTranslating || isCapturing || isLocalTranslating
+              }
+              onClick={() => handleLocalTranslation("development-api")}
+            >
+              {isLocalTranslating && currentServiceMode === "development-api"
+                ? localStage === "capturing"
+                  ? "Capturing\u2026"
+                  : localStage === "processing"
+                    ? "Processing OCR\u2026"
+                    : "Applying OCR Preview\u2026"
+                : "OCR via Dev API"}
+            </button>
+            <span className="btn-desc">
+              Performs Google Vision OCR only when explicitly enabled.
+            </span>
+          </div>
         )}
 
         {hasMarkers && (

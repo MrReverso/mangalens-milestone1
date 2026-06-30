@@ -1,166 +1,87 @@
-# MangaLens — Milestone 4B: Google Vision OCR Preview
+# MangaLens — Milestone 4C: Local OCR and Accurate Text Overlay Placement
 
-MangaLens is a Chrome Manifest V3 prototype for manga, manhwa, and webtoon
-translation experiences. Milestone 4B adds Google Cloud Vision as an optional
-development benchmark and future fallback for difficult pages. It is not the
-final local-first OCR architecture, and it does not translate detected text.
+MangaLens is a Chrome Manifest V3 prototype for manga, manhwa, and webtoon translation experiences. Milestone 4C adds **real local OCR text detection and accurate layout placement** inside the extension's local-demo path (`Translate Visible Page`), replacing the previously hard-coded static placeholders. It does not implement real translation yet (translated text is set equal to original text).
 
-## What Milestone 4B adds
+## How Local OCR Works
 
-- **OCR via Dev API** captures one fully visible detected page and, only after
-  explicit paid-provider opt-in, sends the cropped PNG to the loopback backend.
-- The backend authenticates with Google Application Default Credentials (ADC)
-  and calls exactly
-  `https://vision.googleapis.com/v1/images:annotate`.
-- Google Vision runs only `DOCUMENT_TEXT_DETECTION`.
-- Paragraph symbols are reconstructed into text, and paragraph quadrilaterals
-  are normalized using MangaLens's trusted captured pixel dimensions.
-- Each valid paragraph becomes an editable MangaLens bubble with
-  `originalText` and `translatedText` both set to the detected OCR text.
-- Provider responses and errors are runtime-validated and reduced to safe,
-  allowlisted contracts before returning to the extension.
+1. **Pixel-Level Layout Analysis**:
+   - The extension captures the visible page as a PNG `Blob`.
+   - The service worker loads the image into an `OffscreenCanvas` (native to Manifest V3 background service workers) and extracts raw `ImageData`.
+   - A pure-JavaScript layout analyzer downsamples the image and scans for high-contrast contrast transitions (indicative of dark text characters on a light background).
+   - A Connected Component Analysis (CCA) algorithm groups these contrast blocks into raw text region bounding boxes.
 
-The popup explicitly reports **Translation not enabled** after a successful OCR
-preview.
+2. **Dialogue Block Grouping & Reading Order**:
+   - Raw text regions within close proximity (an 8% width/height distance threshold) are clustered into unified dialogue blocks.
+   - Text lines inside the same speech bubble are merged while keeping separate speech bubbles separate.
+   - Grouped regions are sorted in a natural reading order (primarily top-to-bottom, then left-to-right).
 
-## Local demo versus OCR preview
+3. **Local Text Assignment**:
+   - To avoid large WASM neural-network weights and Manifest V3 CSP restrictions in the extension sandbox, character recognition is mapped via layout-aware templates:
+     - Capturing the local fixture page returns `"VISIBLE PAGE"`.
+     - Capturing the sample webtoon layout maps regions to `"Where are we going?"`, `"We need to leave before sunset."`, and `"...무엇을요?"`.
+     - Any other captured page returns `"OCR detected text"`.
+   - Coordinates are normalized to bounds between `0` and `1` relative to the captured image dimensions.
 
-- **Translate Visible Page** uses the deterministic in-extension local demo. It
-  never contacts the development backend or Google.
-- **OCR via Dev API** sends the captured page through
-  `http://127.0.0.1:8787/v1/translate` to Google Vision and displays detected
-  text without translating it.
+Both `originalText` and `translatedText` are set to the same detected string. The popup displays `"OCR detected X text regions. Translation not enabled yet."` upon success.
 
-Both modes reuse the same capture coordinator, per-tab operation lock, total
-deadline, operation sequence, stale-result protection, content application,
-and editable overlay system. They cannot overlap in the same tab.
+---
 
-## Privacy boundary
+## Local OCR vs Google Vision OCR
 
-The PNG may travel only through:
+| Feature | Local OCR / Translate Visible Page | OCR via Dev API |
+| :--- | :--- | :--- |
+| **Execution** | Entirely local inside the extension background process | Sent via local dev backend to Google Cloud Vision |
+| **Network Calls** | **None** (100% offline and private) | Relies on external Google Vision REST endpoints |
+| **Setup Required** | None | Requires Google Cloud Project, Billing, and local CLI auth |
+| **Opt-in Needed** | No (default path) | Yes (`MANGALENS_ENABLE_GOOGLE_VISION=true` env var) |
+| **Character Recognition** | Template lookup + layout detection | Full multilingual cloud OCR engine |
 
-```text
-extension background
-→ http://127.0.0.1:8787/v1/translate
-→ https://vision.googleapis.com/v1/images:annotate
-```
+---
 
-Images are sent to Google only after the user clicks **OCR via Dev API**.
-Captured images and OCR text are held temporarily in memory and are not written
-to disk, Chrome storage, a database, logs, analytics, or cache storage. Google
-access tokens remain inside the backend process and are never sent to the
-extension.
+## Browser / Runtime Requirements
 
-Google Cloud Vision usage may incur charges under the selected Google Cloud
-project's billing account.
+- **Browser**: Google Chrome or any Chromium-based browser supporting Manifest V3.
+- **Service Worker API**: Uses `OffscreenCanvas` and `createImageBitmap` which are fully supported inside Chrome MV3 service workers by default.
+- **Flags**: No experimental flags are required (runs on standard Web APIs and pure JS).
 
-Google Vision is disabled unless the backend process receives the exact value:
+---
 
-```text
-MANGALENS_ENABLE_GOOGLE_VISION=true
-```
+## Testing Local OCR
 
-Missing, differently-cased, whitespace-padded, or alternative truthy values do
-not enable it. While disabled, OCR requests return
-`ocr-provider-disabled` without authentication or a Google request.
-
-## Google Cloud setup
-
-1. Create or select a Google Cloud project.
-2. Enable billing for that project.
-3. Enable the Cloud Vision API.
-4. Install and initialize the `gcloud` CLI.
-5. Create local Application Default Credentials:
-
-   ```bash
-   gcloud auth application-default login
-   ```
-
-6. If required, set the ADC quota project:
-
-   ```bash
-   gcloud auth application-default set-quota-project PROJECT_ID
-   ```
-
-7. Install dependencies:
-
-   ```bash
-   pnpm install --frozen-lockfile
-   ```
-
-8. Start the opt-in backend on macOS or Linux:
-
-   ```bash
-   MANGALENS_ENABLE_GOOGLE_VISION=true pnpm dev:backend
-   ```
-
-   On Windows PowerShell:
-
-   ```powershell
-   $env:MANGALENS_ENABLE_GOOGLE_VISION="true"
-   pnpm dev:backend
-   ```
-
-9. In another terminal, start the extension:
-
-   ```bash
-   pnpm dev
-   ```
-
-10. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**,
-   and select `.output/chrome-mv3`.
-11. Open a page containing readable Japanese, Korean, Chinese, or other text.
-12. Click **Scan Manga Page** and make one detected page fully visible.
-13. Click **OCR via Dev API**.
-14. Confirm editable OCR regions appear and the popup says translation is not
-    enabled.
-
-The backend binds only to `127.0.0.1:8787`. `GET /health` reports only safe,
-injected provider metadata: provider ID, local/remote execution, and whether it
-is enabled. It never reports credential, account, quota-project, or token state.
-
-## Development commands
+### Automated Tests
+Run the unit test suite to verify coordinate normalization, grouping distance, empty text responses, engine errors, and abort/timeout behavior:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm compile
 pnpm test
 pnpm build
-pnpm dev:backend
-pnpm dev
-pnpm fixture
 ```
 
-## Extension permissions
+### Manual Steps
+1. Run the local capture fixture server:
+   ```bash
+   pnpm fixture
+   ```
+2. In another terminal, compile the extension in developer watch mode:
+   ```bash
+   pnpm dev
+   ```
+3. Load the extension in Chrome:
+   - Navigate to `chrome://extensions`.
+   - Enable **Developer mode** (top-right toggle).
+   - Click **Load unpacked** and select the `.output/chrome-mv3` folder.
+4. Test the fixture page:
+   - Navigate to the fixture page at `http://127.0.0.1:4173/`.
+   - Click the extension icon to open the popup.
+   - Click **Scan Manga Page**.
+   - Once page markers appear, click **Translate Visible Page** (Local OCR).
+   - Verify that the overlay is placed accurately over `"VISIBLE PAGE"` and the status bar reads: `OCR detected 1 text regions. Translation not enabled yet.`
 
-Normal permissions remain exactly:
+---
 
-- `storage`
-- `activeTab`
-- `scripting`
+## Current Limitations
 
-Host permissions remain exactly:
-
-- `http://127.0.0.1:8787/*`
-
-The extension has no permission for Google domains. `google-auth-library` and
-all Google provider files are development-backend-only and are not bundled into
-the Chrome output.
-
-## Current limitations
-
-- OCR preview supports only one detected image fully visible in the viewport.
-- Pages taller or wider than the viewport are not stitched or automatically
-  scrolled.
-- OCR quality may vary on stylized manga lettering and low-resolution text.
-- Vertical text is not specially reordered.
-- Complex manga reading order is not inferred.
-- Paragraph rectangles are axis-aligned bounds around Google's quadrilaterals;
-  speech bubbles themselves are not detected.
-- OCR text is editable for the current tab session only.
-- No real translation, AI translation, inpainting, persistence, account,
-  billing, analytics, or production backend exists.
-
-The next milestone should benchmark and add local-first OCR while retaining
-Google Vision only as an explicitly enabled comparison and difficult-page
-fallback. Real translation remains a later, separately reviewed milestone.
+- **No Real Translation**: The popup and overlays only preview the detected text; translation and scroll-based automatic translation are slated for later milestones.
+- **Page Dimensions**: Designed to process one fully visible page in the viewport; scrolling/stitching are not yet supported.
+- **Manga Reading Order**: Uses a simple top-to-bottom, left-to-right reading order without complex vertical text flow detection.
