@@ -32,6 +32,7 @@ const BACKEND_ERRORS = new Set<string>([
   "backend-invalid-json",
   "backend-invalid-response",
   "backend-timeout",
+  "ocr-provider-disabled",
   "ocr-not-configured",
   "ocr-auth-failed",
   "ocr-unavailable",
@@ -327,7 +328,9 @@ export class TranslationCoordinator {
       pageId: response.pageId,
       pageNumber: metadata.pageNumber,
       bubbleCount: response.bubbles.length,
-      demo: true,
+      resultKind: request.serviceMode === "local-demo"
+        ? "local-demo"
+        : "ocr-preview",
       serviceMode: request.serviceMode,
     };
   }

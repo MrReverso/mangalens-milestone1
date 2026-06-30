@@ -17,6 +17,10 @@ const MAX_REGIONS = 100;
 const MAX_TOTAL_CHARACTERS = 20_000;
 
 export class GoogleVisionOcrProvider implements OcrProvider {
+  readonly id = "google-vision" as const;
+  readonly execution = "remote" as const;
+  readonly enabled = true;
+
   constructor(
     private readonly accessTokenProvider: GoogleAccessTokenProvider,
     private readonly fetchImpl: typeof fetch = fetch,

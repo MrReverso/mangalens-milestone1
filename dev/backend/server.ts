@@ -1,13 +1,25 @@
 import { createServer } from "node:http";
 import { createTranslationRequestHandler } from "./translation-handler";
-import { AdcGoogleAccessTokenProvider } from "./ocr/google-access-token-provider";
+import {
+  AdcGoogleAccessTokenProvider,
+  installSafeGoogleAuthWarningFilter,
+} from "./ocr/google-access-token-provider";
 import { GoogleVisionOcrProvider } from "./ocr/google-vision-ocr-provider";
+import {
+  OptionalOcrProvider,
+  isGoogleVisionExplicitlyEnabled,
+} from "./ocr/optional-ocr-provider";
 
 const PORT = 8787;
 const HOST = "127.0.0.1";
+installSafeGoogleAuthWarningFilter();
+const googleVisionEnabled = isGoogleVisionExplicitlyEnabled(
+  process.env.MANGALENS_ENABLE_GOOGLE_VISION
+);
 const handleTranslationRequest = createTranslationRequestHandler({
-  ocrProvider: new GoogleVisionOcrProvider(
-    new AdcGoogleAccessTokenProvider()
+  ocrProvider: new OptionalOcrProvider(
+    new GoogleVisionOcrProvider(new AdcGoogleAccessTokenProvider()),
+    googleVisionEnabled
   ),
 });
 

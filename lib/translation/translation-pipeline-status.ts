@@ -38,6 +38,8 @@ export function translationPipelineErrorMessage(
     case "backend-response-too-large":
     case "backend-invalid-json":
       return "Development translation request failed";
+    case "ocr-provider-disabled":
+      return "Cloud OCR is disabled in the development backend";
     case "ocr-not-configured":
       return "Google Vision OCR is not configured";
     case "ocr-auth-failed":

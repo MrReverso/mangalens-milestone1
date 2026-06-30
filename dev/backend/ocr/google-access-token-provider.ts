@@ -1,7 +1,4 @@
 import { GoogleAuth } from "google-auth-library";
-import { access } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import { OcrFailure } from "./ocr-errors";
 
 const GOOGLE_AUTH_NO_ADC_MESSAGE =
@@ -11,6 +8,27 @@ const GOOGLE_AUTH_NO_ADC_MESSAGE =
 
 export interface GoogleAccessTokenProvider {
   getAccessToken(signal: AbortSignal): Promise<string>;
+}
+
+let warningFilterInstalled = false;
+
+export function installSafeGoogleAuthWarningFilter(): void {
+  if (warningFilterInstalled) return;
+  warningFilterInstalled = true;
+  const originalEmitWarning = process.emitWarning.bind(process);
+  process.emitWarning = ((
+    warning: string | Error,
+    ...args: unknown[]
+  ): void => {
+    const firstOption = args[0];
+    const warningType = typeof firstOption === "string"
+      ? firstOption
+      : isRecord(firstOption) && typeof firstOption.type === "string"
+        ? firstOption.type
+        : undefined;
+    if (warningType === "MetadataLookupWarning") return;
+    Reflect.apply(originalEmitWarning, process, [warning, ...args]);
+  }) as typeof process.emitWarning;
 }
 
 interface AuthClientLike {
@@ -29,22 +47,11 @@ implements GoogleAccessTokenProvider {
     private readonly createAuth: () => GoogleAuthLike = () =>
       new GoogleAuth({
         scopes: ["https://www.googleapis.com/auth/cloud-platform"],
-      }),
-    private readonly hasAdcConfiguration: () => Promise<boolean> =
-      hasLocalAdcConfiguration
+      })
   ) {}
 
   async getAccessToken(signal: AbortSignal): Promise<string> {
     throwIfAborted(signal);
-    let configured: boolean;
-    try {
-      configured = await this.hasAdcConfiguration();
-    } catch {
-      configured = false;
-    }
-    throwIfAborted(signal);
-    if (!configured) throw new OcrFailure("ocr-not-configured");
-
     let authClient: AuthClientLike;
     try {
       authClient = await this.createAuth().getClient();
@@ -70,26 +77,6 @@ implements GoogleAccessTokenProvider {
     }
     throwIfAborted(signal);
     return token;
-  }
-}
-
-async function hasLocalAdcConfiguration(): Promise<boolean> {
-  const explicit = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-  if (explicit) return fileExists(explicit);
-  const configRoot = process.env.CLOUDSDK_CONFIG ||
-    (process.platform === "win32"
-      ? process.env.APPDATA
-      : join(homedir(), ".config", "gcloud"));
-  if (!configRoot) return false;
-  return fileExists(join(configRoot, "application_default_credentials.json"));
-}
-
-async function fileExists(path: string): Promise<boolean> {
-  try {
-    await access(path);
-    return true;
-  } catch {
-    return false;
   }
 }
 

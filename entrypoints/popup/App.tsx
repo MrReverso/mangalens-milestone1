@@ -421,7 +421,7 @@ export default function App() {
         return;
       }
       setHasTranslations(true);
-      if (rawResponse.serviceMode === "development-api") {
+      if (rawResponse.resultKind === "ocr-preview") {
         setStatus({
           kind: "success",
           message: `OCR detected ${rawResponse.bubbleCount} text regions ` +

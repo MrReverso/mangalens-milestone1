@@ -84,7 +84,7 @@ describe("TranslationCoordinator", () => {
       pageId: "page-2",
       pageNumber: 2,
       bubbleCount: 1,
-      demo: true,
+      resultKind: "local-demo",
       serviceMode: "local-demo",
     });
     expect(deps.captureImage).toHaveBeenCalledTimes(1);
@@ -94,6 +94,25 @@ describe("TranslationCoordinator", () => {
       pageId: "page-2",
     }));
     expect(deps.reportStage).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns explicit local-demo and ocr-preview result kinds", async () => {
+    const local = await new TranslationCoordinator(dependencies()).translate({
+      ...request,
+      serviceMode: "local-demo",
+    });
+    const ocr = await new TranslationCoordinator(dependencies()).translate({
+      ...request,
+      serviceMode: "development-api",
+    });
+    expect(local).toMatchObject({
+      success: true,
+      resultKind: "local-demo",
+    });
+    expect(ocr).toMatchObject({
+      success: true,
+      resultKind: "ocr-preview",
+    });
   });
 
   it("builds matching validated request metadata", async () => {
@@ -648,7 +667,7 @@ describe("TranslationCoordinator", () => {
       pageId: "page-2",
       pageNumber: 2,
       bubbleCount: 1,
-      demo: true,
+      resultKind: "ocr-preview",
       serviceMode: "development-api",
     } as const;
     
@@ -695,6 +714,7 @@ describe("TranslationCoordinator", () => {
   });
 
   it.each([
+    "ocr-provider-disabled",
     "ocr-not-configured",
     "ocr-auth-failed",
     "ocr-unavailable",

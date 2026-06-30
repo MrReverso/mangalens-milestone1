@@ -177,6 +177,51 @@ describe("Google response validation and bubble mapping", () => {
     })).toThrow("ocr-invalid-response");
   });
 
+  it("ignores unknown string detectedBreak values and accepts missing breaks", () => {
+    const response = (symbol: unknown) => ({
+      responses: [{
+        fullTextAnnotation: {
+          pages: [{ blocks: [{ paragraphs: [{
+            boundingBox: {
+              vertices: [{}, { x: 20 }, { x: 20, y: 20 }, { y: 20 }],
+            },
+            words: [{ symbols: [symbol, { text: "B" }] }],
+          }] }] }],
+        },
+      }],
+    });
+    const unknown = validateGoogleVisionResponse(response({
+      text: "A",
+      property: { detectedBreak: { type: "FUTURE_BREAK" } },
+    }));
+    expect(reconstructParagraphText(unknown[0])).toBe("AB");
+    const missing = validateGoogleVisionResponse(response({ text: "A" }));
+    expect(reconstructParagraphText(missing[0])).toBe("AB");
+  });
+
+  it("rejects non-string and malformed detectedBreak structures", () => {
+    const response = (property: unknown) => ({
+      responses: [{
+        fullTextAnnotation: {
+          pages: [{ blocks: [{ paragraphs: [{
+            boundingBox: {
+              vertices: [{}, { x: 20 }, { x: 20, y: 20 }, { y: 20 }],
+            },
+            words: [{ symbols: [{ text: "A", property }] }],
+          }] }] }],
+        },
+      }],
+    });
+    expect(() => validateGoogleVisionResponse(response({
+      detectedBreak: { type: 42 },
+    }))).toThrow("ocr-invalid-response");
+    expect(() => validateGoogleVisionResponse(response({
+      detectedBreak: "LINE_BREAK",
+    }))).toThrow("ocr-invalid-response");
+    expect(() => validateGoogleVisionResponse(response("not-an-object")))
+      .toThrow("ocr-invalid-response");
+  });
+
   it("maps regions to unique request-local bubbles without raw Google fields", () => {
     const bubbles = ocrRegionsToBubbles("request-1", [
       { text: "一", bounds: { x: 0, y: 0, width: 0.2, height: 0.1 } },

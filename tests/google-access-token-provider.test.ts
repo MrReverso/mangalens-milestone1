@@ -13,27 +13,19 @@ describe("ADC Google access token provider", () => {
       "https://www.googleapis.com/auth/cloud-platform"
     );
     expect(source).not.toMatch(/apiKey|key=/);
+    expect(source).not.toContain("process.env.GOOGLE_APPLICATION_CREDENTIALS");
+    expect(source).not.toContain("application_default_credentials.json");
+    expect(source).not.toContain("node:fs");
   });
 
   it("returns a token from GoogleAuth without persisting or exposing it", async () => {
     const getAccessToken = vi.fn(async () => ({ token: "access-token" }));
     const provider = new AdcGoogleAccessTokenProvider(() => ({
       getClient: vi.fn(async () => ({ getAccessToken })),
-    }), async () => true);
+    }));
     await expect(provider.getAccessToken(new AbortController().signal))
       .resolves.toBe("access-token");
     expect(getAccessToken).toHaveBeenCalledOnce();
-  });
-
-  it("rejects missing local ADC before constructing GoogleAuth", async () => {
-    const createAuth = vi.fn();
-    const provider = new AdcGoogleAccessTokenProvider(
-      createAuth,
-      async () => false
-    );
-    await expect(provider.getAccessToken(new AbortController().signal))
-      .rejects.toThrow("ocr-not-configured");
-    expect(createAuth).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -54,7 +46,7 @@ describe("ADC Google access token provider", () => {
         }
         throw error;
       }),
-    }), async () => true);
+    }));
     await expect(provider.getAccessToken(new AbortController().signal))
       .rejects.toThrow("ocr-not-configured");
   });
@@ -66,7 +58,7 @@ describe("ADC Google access token provider", () => {
           throw new Error("private credential detail");
         }),
       })),
-    }), async () => true);
+    }));
     await expect(rejected.getAccessToken(new AbortController().signal))
       .rejects.toThrow("ocr-auth-failed");
 
@@ -74,7 +66,7 @@ describe("ADC Google access token provider", () => {
       getClient: vi.fn(async () => ({
         getAccessToken: vi.fn(async () => ({ token: null })),
       })),
-    }), async () => true);
+    }));
     await expect(empty.getAccessToken(new AbortController().signal))
       .rejects.toThrow("ocr-auth-failed");
   });
@@ -83,10 +75,7 @@ describe("ADC Google access token provider", () => {
     const initiallyAborted = new AbortController();
     initiallyAborted.abort();
     const getClient = vi.fn();
-    const provider = new AdcGoogleAccessTokenProvider(
-      () => ({ getClient }),
-      async () => true
-    );
+    const provider = new AdcGoogleAccessTokenProvider(() => ({ getClient }));
     await expect(provider.getAccessToken(initiallyAborted.signal))
       .rejects.toMatchObject({ name: "AbortError" });
     expect(getClient).not.toHaveBeenCalled();
@@ -97,7 +86,7 @@ describe("ADC Google access token provider", () => {
         afterClient.abort();
         return { getAccessToken: vi.fn() };
       }),
-    }), async () => true);
+    }));
     await expect(providerAfterClient.getAccessToken(afterClient.signal))
       .rejects.toMatchObject({ name: "AbortError" });
 
@@ -109,7 +98,7 @@ describe("ADC Google access token provider", () => {
           return { token: "discarded-token" };
         }),
       })),
-    }), async () => true);
+    }));
     await expect(providerAfterToken.getAccessToken(afterToken.signal))
       .rejects.toMatchObject({ name: "AbortError" });
   });

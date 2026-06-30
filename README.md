@@ -1,14 +1,14 @@
 # MangaLens — Milestone 4B: Google Vision OCR Preview
 
 MangaLens is a Chrome Manifest V3 prototype for manga, manhwa, and webtoon
-translation experiences. Milestone 4B adds real paragraph-level OCR through a
-loopback development backend and Google Cloud Vision. It does not translate the
-detected text.
+translation experiences. Milestone 4B adds Google Cloud Vision as an optional
+development benchmark and future fallback for difficult pages. It is not the
+final local-first OCR architecture, and it does not translate detected text.
 
 ## What Milestone 4B adds
 
-- **OCR via Dev API** captures one fully visible detected page and sends the
-  cropped PNG to the loopback backend.
+- **OCR via Dev API** captures one fully visible detected page and, only after
+  explicit paid-provider opt-in, sends the cropped PNG to the loopback backend.
 - The backend authenticates with Google Application Default Credentials (ADC)
   and calls exactly
   `https://vision.googleapis.com/v1/images:annotate`.
@@ -54,6 +54,16 @@ extension.
 Google Cloud Vision usage may incur charges under the selected Google Cloud
 project's billing account.
 
+Google Vision is disabled unless the backend process receives the exact value:
+
+```text
+MANGALENS_ENABLE_GOOGLE_VISION=true
+```
+
+Missing, differently-cased, whitespace-padded, or alternative truthy values do
+not enable it. While disabled, OCR requests return
+`ocr-provider-disabled` without authentication or a Google request.
+
 ## Google Cloud setup
 
 1. Create or select a Google Cloud project.
@@ -72,30 +82,42 @@ project's billing account.
    gcloud auth application-default set-quota-project PROJECT_ID
    ```
 
-7. Install dependencies and start the loopback backend:
+7. Install dependencies:
 
    ```bash
    pnpm install --frozen-lockfile
+   ```
+
+8. Start the opt-in backend on macOS or Linux:
+
+   ```bash
+   MANGALENS_ENABLE_GOOGLE_VISION=true pnpm dev:backend
+   ```
+
+   On Windows PowerShell:
+
+   ```powershell
+   $env:MANGALENS_ENABLE_GOOGLE_VISION="true"
    pnpm dev:backend
    ```
 
-8. In another terminal, start the extension:
+9. In another terminal, start the extension:
 
    ```bash
    pnpm dev
    ```
 
-9. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**,
+10. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**,
    and select `.output/chrome-mv3`.
-10. Open a page containing readable Japanese, Korean, Chinese, or other text.
-11. Click **Scan Manga Page** and make one detected page fully visible.
-12. Click **OCR via Dev API**.
-13. Confirm editable OCR regions appear and the popup says translation is not
+11. Open a page containing readable Japanese, Korean, Chinese, or other text.
+12. Click **Scan Manga Page** and make one detected page fully visible.
+13. Click **OCR via Dev API**.
+14. Confirm editable OCR regions appear and the popup says translation is not
     enabled.
 
-The backend binds only to `127.0.0.1:8787`. `GET /health` reports the safe
-service contract and `ocrProvider: "google-vision"` without exposing credential
-or project information.
+The backend binds only to `127.0.0.1:8787`. `GET /health` reports only safe,
+injected provider metadata: provider ID, local/remote execution, and whether it
+is enabled. It never reports credential, account, quota-project, or token state.
 
 ## Development commands
 
@@ -139,7 +161,6 @@ the Chrome output.
 - No real translation, AI translation, inpainting, persistence, account,
   billing, analytics, or production backend exists.
 
-Milestone 4C should be a separate review of a real translation provider applied
-to validated OCR regions, including language behavior, provider privacy,
-cost controls, error handling, and explicit confirmation that OCR text—not
-image bytes—is the translation input.
+The next milestone should benchmark and add local-first OCR while retaining
+Google Vision only as an explicitly enabled comparison and difficult-page
+fallback. Real translation remains a later, separately reviewed milestone.

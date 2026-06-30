@@ -5,6 +5,8 @@ import { translationPipelineErrorMessage } from "@/lib/translation/translation-p
 
 describe("OCR extension UX and privacy boundary", () => {
   it("maps every OCR error to the required friendly status", () => {
+    expect(translationPipelineErrorMessage("ocr-provider-disabled"))
+      .toBe("Cloud OCR is disabled in the development backend");
     expect(translationPipelineErrorMessage("ocr-not-configured"))
       .toBe("Google Vision OCR is not configured");
     expect(translationPipelineErrorMessage("ocr-auth-failed"))
@@ -32,6 +34,7 @@ describe("OCR extension UX and privacy boundary", () => {
     expect(popup).toContain("Processing OCR");
     expect(popup).toContain("Applying OCR Preview");
     expect(popup).toContain("Translation not enabled");
+    expect(popup).toContain('rawResponse.resultKind === "ocr-preview"');
   });
 
   it("keeps Google requests out of extension code and messages", () => {

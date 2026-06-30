@@ -153,6 +153,7 @@ export class HttpTranslationService implements TranslationService {
 }
 
 const BACKEND_OCR_ERRORS = new Set<string>([
+  "ocr-provider-disabled",
   "ocr-not-configured",
   "ocr-auth-failed",
   "ocr-unavailable",

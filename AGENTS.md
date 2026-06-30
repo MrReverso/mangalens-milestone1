@@ -41,3 +41,7 @@ scanner-controller page sessions, and keep local/demo services deterministic.
 - Never log or persist images or OCR text.
 - Real translation requires a separate reviewed milestone.
 - Extension permissions must never include Google domains.
+- Paid providers require exact explicit opt-in and must never become implicit
+  defaults.
+- Provider identity and local/remote execution metadata must be explicit.
+- Local-first OCR remains the target production architecture.

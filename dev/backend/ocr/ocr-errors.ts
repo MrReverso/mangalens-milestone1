@@ -1,4 +1,5 @@
 export type OcrErrorCode =
+  | "ocr-provider-disabled"
   | "ocr-not-configured"
   | "ocr-auth-failed"
   | "ocr-unavailable"
@@ -9,6 +10,7 @@ export type OcrErrorCode =
   | "ocr-no-text";
 
 const OCR_ERROR_CODES = new Set<string>([
+  "ocr-provider-disabled",
   "ocr-not-configured",
   "ocr-auth-failed",
   "ocr-unavailable",
@@ -40,6 +42,8 @@ export function ocrErrorCode(error: unknown): OcrErrorCode {
 
 export function ocrErrorStatus(code: OcrErrorCode): number {
   switch (code) {
+    case "ocr-provider-disabled":
+      return 503;
     case "ocr-not-configured":
     case "ocr-auth-failed":
       return 503;

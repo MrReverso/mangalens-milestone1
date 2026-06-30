@@ -26,8 +26,11 @@ export interface TranslationHandlerDependencies {
 }
 
 const fallbackProvider: OcrProvider = {
+  id: "google-vision",
+  execution: "remote",
+  enabled: false,
   recognize: async () => {
-    throw new OcrFailure("ocr-not-configured");
+    throw new OcrFailure("ocr-provider-disabled");
   },
 };
 
@@ -83,7 +86,9 @@ async function handleRequest(
         status: "ok",
         service: "mangalens-development-api",
         contractVersion: 1,
-        ocrProvider: "google-vision",
+        ocrProvider: ocrProvider.id,
+        ocrExecution: ocrProvider.execution,
+        ocrEnabled: ocrProvider.enabled,
       })
     );
     logRequest(200);

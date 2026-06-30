@@ -29,6 +29,7 @@ const imageBlob = new Blob([new Uint8Array(10)], { type: "image/png" });
 
 describe("HttpTranslationService", () => {
   it.each([
+    "ocr-provider-disabled",
     "ocr-not-configured",
     "ocr-auth-failed",
     "ocr-unavailable",

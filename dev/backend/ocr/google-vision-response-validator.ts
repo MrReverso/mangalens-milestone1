@@ -107,11 +107,12 @@ function validateSymbol(value: unknown): GoogleSymbol {
     }
     if ("detectedBreak" in value.property) {
       if (!isRecord(value.property.detectedBreak) ||
-          typeof value.property.detectedBreak.type !== "string" ||
-          !BREAK_TYPES.has(value.property.detectedBreak.type)) {
+          typeof value.property.detectedBreak.type !== "string") {
         throw new OcrFailure("ocr-invalid-response");
       }
-      breakType = value.property.detectedBreak.type;
+      if (BREAK_TYPES.has(value.property.detectedBreak.type)) {
+        breakType = value.property.detectedBreak.type;
+      }
     }
   }
   return { text: value.text, ...(breakType ? { breakType } : {}) };

@@ -10,8 +10,15 @@ import { OcrFailure } from "@/dev/backend/ocr/ocr-errors";
 import type { OcrErrorCode } from "@/dev/backend/ocr/ocr-errors";
 import type { OcrInput } from "@/dev/backend/ocr/ocr-types";
 
+const fakeProviderMetadata = {
+  id: "test-fake" as const,
+  execution: "local" as const,
+  enabled: true,
+};
+
 const handleTranslationRequest = createTranslationRequestHandler({
   ocrProvider: {
+    ...fakeProviderMetadata,
     recognize: vi.fn(async () => ({
       regions: [
         {
@@ -182,9 +189,36 @@ describe("Development Server Handlers", () => {
       status: "ok",
       service: "mangalens-development-api",
       contractVersion: 1,
-      ocrProvider: "google-vision",
+      ocrProvider: "test-fake",
+      ocrExecution: "local",
+      ocrEnabled: true,
     });
   });
+
+  it.each([false, true])(
+    "GET /health reports injected Google provider enabled=%s dynamically",
+    async (enabled) => {
+      const handler = createTranslationRequestHandler({
+        ocrProvider: {
+          id: "google-vision",
+          execution: "remote",
+          enabled,
+          recognize: vi.fn(async () => ({ regions: [] })),
+        },
+        logger: () => undefined,
+      });
+      const { res, getOutput } = createMockResponse();
+      await handler(createMockRequest({ method: "GET", url: "/health" }), res);
+      expect(JSON.parse(getOutput().body)).toEqual({
+        status: "ok",
+        service: "mangalens-development-api",
+        contractVersion: 1,
+        ocrProvider: "google-vision",
+        ocrExecution: "remote",
+        ocrEnabled: enabled,
+      });
+    }
+  );
 
   it("POST /v1/translate returns deterministic translations based on targetLanguage", async () => {
     const boundary = "WebKitFormBoundary123";
@@ -632,7 +666,7 @@ describe("Development Server Handlers", () => {
       };
     });
     const handler = createTranslationRequestHandler({
-      ocrProvider: { recognize },
+      ocrProvider: { ...fakeProviderMetadata, recognize },
       logger: () => undefined,
     });
     const { res, getOutput } = createMockResponse();
@@ -655,6 +689,7 @@ describe("Development Server Handlers", () => {
   it("returns OCR regions as untranslated, editable-contract bubbles", async () => {
     const handler = createTranslationRequestHandler({
       ocrProvider: {
+        ...fakeProviderMetadata,
         recognize: vi.fn(async () => ({
           regions: [{
             text: "そのまま",
@@ -676,6 +711,7 @@ describe("Development Server Handlers", () => {
   });
 
   it.each<readonly [OcrErrorCode, number]>([
+    ["ocr-provider-disabled", 503],
     ["ocr-no-text", 422],
     ["ocr-not-configured", 503],
     ["ocr-auth-failed", 503],
@@ -684,6 +720,7 @@ describe("Development Server Handlers", () => {
   ])("returns only safe allowlisted %s errors", async (code, status) => {
     const handler = createTranslationRequestHandler({
       ocrProvider: {
+        ...fakeProviderMetadata,
         recognize: vi.fn(async () => {
           throw new OcrFailure(code);
         }),
@@ -699,6 +736,7 @@ describe("Development Server Handlers", () => {
     const entries: unknown[] = [];
     const handler = createTranslationRequestHandler({
       ocrProvider: {
+        ...fakeProviderMetadata,
         recognize: vi.fn(async () => ({
           regions: [{
             text: "private OCR text",
@@ -729,7 +767,7 @@ describe("Development Server Handlers", () => {
       }, { once: true });
     }));
     const handler = createTranslationRequestHandler({
-      ocrProvider: { recognize },
+      ocrProvider: { ...fakeProviderMetadata, recognize },
       logger: () => undefined,
     });
     const request = createValidPostRequest();
@@ -748,6 +786,7 @@ describe("Development Server Handlers", () => {
   it("rejects malformed injected OCR regions through the response contract", async () => {
     const handler = createTranslationRequestHandler({
       ocrProvider: {
+        ...fakeProviderMetadata,
         recognize: vi.fn(async () => ({
           regions: [{
             text: "",
