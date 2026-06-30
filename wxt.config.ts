@@ -1,0 +1,11 @@
+import { defineConfig } from 'wxt';
+
+export default defineConfig({
+  modules: ['@wxt-dev/module-react'],
+  manifest: {
+    name: 'MangaLens',
+    description: 'Manga Translator — detect and translate manga, manhwa, and webtoon pages directly on websites.',
+    version: '0.1.0',
+    permissions: ['storage', 'activeTab', 'scripting'],
+  },
+});
