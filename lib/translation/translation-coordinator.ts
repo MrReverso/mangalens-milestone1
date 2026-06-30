@@ -198,7 +198,8 @@ export class TranslationCoordinator {
     if (first.kind === "timeout") {
       operation.controller.abort();
       this.startRetirementDeadline(request.tabId, operation);
-      return { success: false, error: { code: "timeout" } };
+      const code = request.serviceMode === "development-api" ? "backend-timeout" : "timeout";
+      return { success: false, error: { code } };
     }
     if (first.kind === "success") return first.response;
     return {

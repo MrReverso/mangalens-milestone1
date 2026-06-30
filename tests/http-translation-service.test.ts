@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { HttpTranslationService } from "@/lib/translation/http-translation-service";
+import { HttpTranslationService, validateContentType } from "@/lib/translation/http-translation-service";
 import type { TranslationApiRequestMetadata } from "@/types/translation-api";
 
 const metadata: TranslationApiRequestMetadata = {
@@ -473,5 +473,75 @@ describe("HttpTranslationService", () => {
     await expect(
       service.translate({ image: imageBlob, metadata }, new AbortController().signal)
     ).rejects.toThrow("backend-invalid-json");
+  });
+
+  it("deferred-read abort triggers cancel, returns AbortError, and JSON parsing is never reached", async () => {
+    const cancelSpy = vi.fn(async () => {});
+    const controller = new AbortController();
+    
+    let resolveRead!: (value: any) => void;
+    const readPromise = new Promise((resolve) => {
+      resolveRead = resolve;
+    });
+
+    const mockFetch = vi.fn(async () => {
+      return {
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        body: {
+          getReader() {
+            return {
+              async read() {
+                return readPromise;
+              },
+              cancel: cancelSpy,
+              releaseLock() {},
+            };
+          },
+        },
+      } as unknown as Response;
+    });
+
+    const service = new HttpTranslationService({
+      endpoint: "http://127.0.0.1:8787/v1/translate",
+      fetchImpl: mockFetch as any,
+    });
+
+    const translatePromise = service.translate({ image: imageBlob, metadata }, controller.signal);
+
+    await new Promise((r) => setTimeout(r, 0));
+
+    controller.abort();
+
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+
+    resolveRead({ done: true, value: undefined });
+
+    await expect(translatePromise).rejects.toThrow();
+    try {
+      await translatePromise;
+    } catch (err: any) {
+      expect(err.name).toBe("AbortError");
+    }
+  });
+
+  it("strictly validates application/json Content-Type and charset parameters", () => {
+    expect(() => validateContentType("application/json")).not.toThrow();
+    expect(() => validateContentType("application/json; charset=utf-8")).not.toThrow();
+    expect(() => validateContentType('application/json; charset="utf-8"')).not.toThrow();
+    expect(() => validateContentType("application/json; charset=UTF-8")).not.toThrow();
+    expect(() => validateContentType("APPLICATION/JSON; CHARSET=UTF-8")).not.toThrow();
+
+    expect(() => validateContentType("application/json;")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("application/json; foo=bar")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("application/json; charset=utf-8; foo=bar")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("application/json; charset=utf-8; charset=utf-8")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("application/json; charset=")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("application/json; charset='utf-8'")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("application/jsonp")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("application/json-patch+json")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("text/application/json")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType("")).toThrow("backend-invalid-content-type");
+    expect(() => validateContentType(null)).toThrow("backend-invalid-content-type");
   });
 });

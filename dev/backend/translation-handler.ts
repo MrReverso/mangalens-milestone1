@@ -84,52 +84,73 @@ export async function handleTranslationRequest(
     let totalBytes = 0;
 
     const cleanup = () => {
-      settled = true;
       if (timeoutTimer) {
         clearTimeout(timeoutTimer);
         timeoutTimer = null;
       }
       chunks = null;
-      req.removeAllListeners("data");
-      req.removeAllListeners("end");
-      req.removeAllListeners("error");
-      req.removeAllListeners("aborted");
     };
 
     const bodyPromise = new Promise<Buffer>((resolve, reject) => {
-      timeoutTimer = setTimeout(() => {
-        if (settled) return;
-        reject(new Error("timeout"));
-      }, 10000);
-
-      req.on("data", (chunk: Buffer) => {
+      const onData = (chunk: Buffer) => {
         if (settled) return;
         totalBytes += chunk.length;
         if (totalBytes > 21 * 1024 * 1024) {
-          reject(new Error("payload-too-large"));
+          settleFailure(new Error("payload-too-large"));
           return;
         }
         chunks?.push(chunk);
-      });
+      };
 
-      req.on("end", () => {
+      const onEnd = () => {
         if (settled) return;
         if (chunks) {
-          resolve(Buffer.concat(chunks));
+          settleSuccess(Buffer.concat(chunks));
         } else {
-          reject(new Error("aborted"));
+          settleFailure(new Error("aborted"));
         }
-      });
+      };
 
-      req.on("error", (err: unknown) => {
+      const onError = (err: unknown) => {
         if (settled) return;
+        settleFailure(err instanceof Error ? err : new Error("unknown-error"));
+      };
+
+      const onAborted = () => {
+        if (settled) return;
+        settleFailure(new Error("aborted"));
+      };
+
+      const settleSuccess = (result: Buffer) => {
+        settled = true;
+        cleanupListeners();
+        cleanup();
+        resolve(result);
+      };
+
+      const settleFailure = (err: Error) => {
+        settled = true;
+        cleanupListeners();
+        cleanup();
         reject(err);
-      });
+      };
 
-      req.on("aborted", () => {
+      const cleanupListeners = () => {
+        req.off("data", onData);
+        req.off("end", onEnd);
+        req.off("error", onError);
+        req.off("aborted", onAborted);
+      };
+
+      req.on("data", onData);
+      req.on("end", onEnd);
+      req.on("error", onError);
+      req.on("aborted", onAborted);
+
+      timeoutTimer = setTimeout(() => {
         if (settled) return;
-        reject(new Error("aborted"));
-      });
+        settleFailure(new Error("timeout"));
+      }, 10000);
     });
 
     let body: Buffer;
@@ -137,7 +158,6 @@ export async function handleTranslationRequest(
       body = await bodyPromise;
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : "";
-      cleanup();
 
       let status = 400;
       let code = "malformed-request";
@@ -154,8 +174,6 @@ export async function handleTranslationRequest(
       logRequest(method, pathname, status, Date.now() - start);
       return;
     }
-
-    cleanup();
 
     const parts = parseMultipart(body, boundary);
     // Erase body reference immediately
@@ -281,38 +299,38 @@ export async function handleTranslationRequest(
 
 export function parseMultipartContentType(header: string): { boundary: string } | null {
   const parts = header.split(";").map((s) => s.trim());
-  if (parts.length < 2) return null;
+  if (parts.length !== 2) {
+    return null; // Reject extra parameters, trailing semicolons, or missing boundary
+  }
 
   const mediaType = parts[0].toLowerCase();
   if (mediaType !== "multipart/form-data") {
     return null;
   }
 
-  let boundary: string | null = null;
-  let boundaryCount = 0;
-
-  for (let i = 1; i < parts.length; i++) {
-    const part = parts[i];
-    const match = part.match(/^boundary\s*=\s*(.+)$/i);
-    if (match) {
-      boundaryCount++;
-      if (boundaryCount > 1) {
-        return null;
-      }
-      let val = match[1].trim();
-      if (val.startsWith('"') && val.endsWith('"')) {
-        val = val.slice(1, -1).trim();
-      }
-      boundary = val;
-    } else {
-      const lowerPart = part.toLowerCase();
-      if (lowerPart.startsWith("boundary")) {
-        return null;
-      }
-    }
+  const param = parts[1];
+  const match = param.match(/^boundary\s*=\s*(.+)$/i);
+  if (!match) {
+    return null;
   }
 
-  if (!boundary || boundary.length === 0) {
+  let boundary = match[1].trim();
+
+  // Reject single-quoted boundaries
+  if (boundary.startsWith("'") || boundary.endsWith("'")) {
+    return null;
+  }
+
+  let isQuoted = false;
+  if (boundary.startsWith('"') || boundary.endsWith('"')) {
+    if (!boundary.startsWith('"') || !boundary.endsWith('"') || boundary.length < 2) {
+      return null; // Mismatched quotes
+    }
+    boundary = boundary.slice(1, -1);
+    isQuoted = true;
+  }
+
+  if (boundary.length === 0) {
     return null;
   }
 
@@ -320,7 +338,25 @@ export function parseMultipartContentType(header: string): { boundary: string } 
     return null;
   }
 
-  if (!/^[a-zA-Z0-9'()+,\-./:=? ]+$/.test(boundary)) {
+  // Reject ?, &, # or = inside boundary
+  if (/[?&#=]/.test(boundary)) {
+    return null;
+  }
+
+  // Reject unquoted boundaries containing spaces
+  if (!isQuoted && boundary.includes(" ")) {
+    return null;
+  }
+
+  // Reject control characters
+  for (let i = 0; i < boundary.length; i++) {
+    const code = boundary.charCodeAt(i);
+    if (code < 0x20 || code >= 0x7f) {
+      return null;
+    }
+  }
+
+  if (!/^[a-zA-Z0-9'()+\-./: ]+$/.test(boundary)) {
     return null;
   }
 

@@ -660,4 +660,37 @@ describe("TranslationCoordinator", () => {
     expect(keys).not.toContain("endpoint");
     expect(keys).not.toContain("apiKey");
   });
+
+  it("returns timeout for local-demo and backend-timeout for development-api upon total deadline expiry", async () => {
+    vi.useFakeTimers();
+    let resolveService!: (value: any) => void;
+    const servicePromise = new Promise((resolve) => {
+      resolveService = resolve;
+    });
+
+    const deps = dependencies({
+      services: {
+        "local-demo": { translate: vi.fn(() => servicePromise) },
+        "development-api": { translate: vi.fn(() => servicePromise) },
+      },
+      timeoutMs: 100,
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    const promiseLocal = coordinator.translate({ ...request, serviceMode: "local-demo" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await promiseLocal).toEqual({
+      success: false,
+      error: { code: "timeout" },
+    });
+
+    const promiseDev = coordinator.translate({ ...request, tabId: 8, serviceMode: "development-api" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await promiseDev).toEqual({
+      success: false,
+      error: { code: "backend-timeout" },
+    });
+
+    resolveService({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles });
+  });
 });

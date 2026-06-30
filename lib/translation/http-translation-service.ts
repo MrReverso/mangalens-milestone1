@@ -102,23 +102,7 @@ export class HttpTranslationService implements TranslationService {
     }
 
     const contentType = response.headers.get("content-type");
-    if (!contentType) {
-      throw new Error("backend-invalid-content-type");
-    }
-    const [mediaType, ...paramParts] = contentType.split(";");
-    const normalizedMediaType = mediaType.trim().toLowerCase();
-    if (normalizedMediaType !== "application/json") {
-      throw new Error("backend-invalid-content-type");
-    }
-    for (const part of paramParts) {
-      const match = part.trim().match(/^charset\s*=\s*(.+)$/i);
-      if (match) {
-        const charset = match[1].trim().replace(/['"]/g, "").toLowerCase();
-        if (charset !== "utf-8") {
-          throw new Error("backend-invalid-content-type");
-        }
-      }
-    }
+    validateContentType(contentType);
 
     // 5. Read response body using a size-bounded method
     let bodyBytes: Uint8Array;
@@ -134,13 +118,30 @@ export class HttpTranslationService implements TranslationService {
       throw new Error("backend-request-failed");
     }
 
+    if (signal.aborted) {
+      throw new DOMException("Translation cancelled", "AbortError");
+    }
+
     // 6. Decode UTF-8 and Parse JSON
     let parsed: unknown;
     try {
+      if (signal.aborted) {
+        throw new DOMException("Translation cancelled", "AbortError");
+      }
       const text = new TextDecoder("utf-8", { fatal: true }).decode(bodyBytes);
+      if (signal.aborted) {
+        throw new DOMException("Translation cancelled", "AbortError");
+      }
       parsed = JSON.parse(text);
-    } catch {
+    } catch (error) {
+      if (signal.aborted || (error instanceof DOMException && error.name === "AbortError")) {
+        throw new DOMException("Translation cancelled", "AbortError");
+      }
       throw new Error("backend-invalid-json");
+    }
+
+    if (signal.aborted) {
+      throw new DOMException("Translation cancelled", "AbortError");
     }
 
     return parsed;
@@ -206,6 +207,9 @@ async function readResponseBody(
         throw abortError || new DOMException("Translation cancelled", "AbortError");
       }
       const { done, value } = await reader.read();
+      if (signal.aborted) {
+        throw abortError || new DOMException("Translation cancelled", "AbortError");
+      }
       if (done) break;
       if (value) {
         totalBytes += value.length;
@@ -237,4 +241,49 @@ async function readResponseBody(
     offset += chunk.length;
   }
   return result;
+}
+
+export function validateContentType(contentType: string | null): void {
+  if (!contentType) {
+    throw new Error("backend-invalid-content-type");
+  }
+
+  const parts = contentType.split(";").map((p) => p.trim());
+  const mediaType = parts[0].toLowerCase();
+  
+  if (mediaType !== "application/json") {
+    throw new Error("backend-invalid-content-type");
+  }
+
+  if (parts.length === 1) {
+    return;
+  }
+
+  if (parts.length > 2) {
+    throw new Error("backend-invalid-content-type");
+  }
+
+  const param = parts[1];
+  if (!param) {
+    throw new Error("backend-invalid-content-type");
+  }
+
+  const match = param.match(/^charset\s*=\s*(.+)$/i);
+  if (!match) {
+    throw new Error("backend-invalid-content-type");
+  }
+
+  const charsetVal = match[1].trim();
+  if (charsetVal.startsWith("'") || charsetVal.endsWith("'")) {
+    throw new Error("backend-invalid-content-type");
+  }
+
+  let unquoted = charsetVal;
+  if (unquoted.startsWith('"') && unquoted.endsWith('"')) {
+    unquoted = unquoted.slice(1, -1).trim();
+  }
+
+  if (unquoted.toLowerCase() !== "utf-8") {
+    throw new Error("backend-invalid-content-type");
+  }
 }
