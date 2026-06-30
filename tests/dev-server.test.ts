@@ -1,8 +1,43 @@
 import { describe, expect, it, vi } from "vitest";
-import { handleTranslationRequest, parseMultipartContentType } from "@/dev/backend/translation-handler";
+import {
+  createTranslationRequestHandler,
+  parseMultipartContentType,
+} from "@/dev/backend/translation-handler";
 import { IncomingMessage, ServerResponse } from "node:http";
 import { Socket } from "node:net";
 import { Buffer } from "node:buffer";
+import { OcrFailure } from "@/dev/backend/ocr/ocr-errors";
+import type { OcrErrorCode } from "@/dev/backend/ocr/ocr-errors";
+import type { OcrInput } from "@/dev/backend/ocr/ocr-types";
+
+const fakeProviderMetadata = {
+  id: "test-fake" as const,
+  execution: "local" as const,
+  enabled: true,
+};
+
+const handleTranslationRequest = createTranslationRequestHandler({
+  ocrProvider: {
+    ...fakeProviderMetadata,
+    recognize: vi.fn(async () => ({
+      regions: [
+        {
+          text: "Detected paragraph one",
+          bounds: { x: 0.08, y: 0.08, width: 0.34, height: 0.13 },
+        },
+        {
+          text: "Detected paragraph two",
+          bounds: { x: 0.58, y: 0.24, width: 0.32, height: 0.12 },
+        },
+        {
+          text: "Detected paragraph three",
+          bounds: { x: 0.31, y: 0.73, width: 0.38, height: 0.13 },
+        },
+      ],
+    })),
+  },
+  logger: () => undefined,
+});
 
 function createMockRequest(options: {
   method?: string;
@@ -107,6 +142,35 @@ const validPngData = Buffer.concat([
   Buffer.alloc(2),
 ]);
 
+function createValidPostRequest(
+  metadata: typeof mockMetadata = mockMetadata
+): IncomingMessage {
+  const boundary = "OcrBoundary";
+  const body = buildMultipartBody(boundary, [
+    {
+      name: "metadata",
+      filename: "metadata.json",
+      contentType: "application/json",
+      data: Buffer.from(JSON.stringify(metadata)),
+    },
+    {
+      name: "image",
+      filename: "page.png",
+      contentType: "image/png",
+      data: validPngData,
+    },
+  ]);
+  return createMockRequest({
+    method: "POST",
+    url: "/v1/translate",
+    headers: {
+      "content-type": `multipart/form-data; boundary=${boundary}`,
+      "content-length": String(body.length),
+    },
+    bodyChunks: [body],
+  });
+}
+
 describe("Development Server Handlers", () => {
   it("GET /health health check returns status ok and contractVersion 1", async () => {
     const req = createMockRequest({ method: "GET", url: "/health" });
@@ -125,8 +189,36 @@ describe("Development Server Handlers", () => {
       status: "ok",
       service: "mangalens-development-api",
       contractVersion: 1,
+      ocrProvider: "test-fake",
+      ocrExecution: "local",
+      ocrEnabled: true,
     });
   });
+
+  it.each([false, true])(
+    "GET /health reports injected Google provider enabled=%s dynamically",
+    async (enabled) => {
+      const handler = createTranslationRequestHandler({
+        ocrProvider: {
+          id: "google-vision",
+          execution: "remote",
+          enabled,
+          recognize: vi.fn(async () => ({ regions: [] })),
+        },
+        logger: () => undefined,
+      });
+      const { res, getOutput } = createMockResponse();
+      await handler(createMockRequest({ method: "GET", url: "/health" }), res);
+      expect(JSON.parse(getOutput().body)).toEqual({
+        status: "ok",
+        service: "mangalens-development-api",
+        contractVersion: 1,
+        ocrProvider: "google-vision",
+        ocrExecution: "remote",
+        ocrEnabled: enabled,
+      });
+    }
+  );
 
   it("POST /v1/translate returns deterministic translations based on targetLanguage", async () => {
     const boundary = "WebKitFormBoundary123";
@@ -168,10 +260,8 @@ describe("Development Server Handlers", () => {
     expect(response.pageId).toBe("page-1");
     expect(response.bubbles).toHaveLength(3);
 
-    // Deterministic translation validation for Spanish
-    expect(response.bubbles[0].translatedText).toBe("Por fin llegamos.");
-    expect(response.bubbles[1].translatedText).toBe("Mantente alerta.");
-    expect(response.bubbles[2].translatedText).toBe("Esto es solo el comienzo.");
+    expect(response.bubbles[0].translatedText).toBe("Detected paragraph one");
+    expect(response.bubbles[0].originalText).toBe("Detected paragraph one");
   });
 
   it("POST /v1/translate rejects with 400 when metadata part is missing", async () => {
@@ -237,13 +327,8 @@ describe("Development Server Handlers", () => {
     expect(out.status).toBe(400);
   });
 
-  it("POST /v1/translate handles target language variation", async () => {
+  it("POST /v1/translate keeps OCR text unchanged across target languages", async () => {
     const languages = ["de", "fr", "it"] as const;
-    const expectedFirstBubble = {
-      de: "Wir haben es endlich geschafft.",
-      fr: "Nous y sommes enfin.",
-      it: "Ce l’abbiamo finalmente fatta.",
-    };
 
     for (const lang of languages) {
       const boundary = "WebKitFormBoundary123";
@@ -274,7 +359,7 @@ describe("Development Server Handlers", () => {
       const out = getOutput();
       expect(out.status).toBe(200);
       const response = JSON.parse(out.body);
-      expect(response.bubbles[0].translatedText).toBe(expectedFirstBubble[lang]);
+      expect(response.bubbles[0].translatedText).toBe("Detected paragraph one");
     }
   });
 
@@ -562,5 +647,161 @@ describe("Development Server Handlers", () => {
     expect(() => req.emit("data", Buffer.alloc(100))).not.toThrow();
     expect(() => req.emit("error", new Error("late error"))).not.toThrow();
     expect(() => req.emit("end")).not.toThrow();
+  });
+
+  it("injects exact validated bytes, dimensions, and source language into OCR", async () => {
+    let seenInput: OcrInput | undefined;
+    let seenSignal: AbortSignal | undefined;
+    const recognize = vi.fn(async (
+      ocrInput: OcrInput,
+      signal: AbortSignal
+    ) => {
+      seenInput = ocrInput;
+      seenSignal = signal;
+      return {
+        regions: [{
+          text: "検出",
+          bounds: { x: 0.1, y: 0.1, width: 0.3, height: 0.2 },
+        }],
+      };
+    });
+    const handler = createTranslationRequestHandler({
+      ocrProvider: { ...fakeProviderMetadata, recognize },
+      logger: () => undefined,
+    });
+    const { res, getOutput } = createMockResponse();
+    await handler(createValidPostRequest({
+      ...mockMetadata,
+      sourceLanguage: "ja",
+    }), res);
+    expect(getOutput().status).toBe(200);
+    expect(recognize).toHaveBeenCalledOnce();
+    expect(seenInput?.image.equals(validPngData)).toBe(true);
+    expect(seenInput).toMatchObject({
+      mimeType: "image/png",
+      pixelWidth: 100,
+      pixelHeight: 100,
+      sourceLanguage: "ja",
+    });
+    expect(seenSignal).toBeInstanceOf(AbortSignal);
+  });
+
+  it("returns OCR regions as untranslated, editable-contract bubbles", async () => {
+    const handler = createTranslationRequestHandler({
+      ocrProvider: {
+        ...fakeProviderMetadata,
+        recognize: vi.fn(async () => ({
+          regions: [{
+            text: "そのまま",
+            bounds: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
+          }],
+        })),
+      },
+      logger: () => undefined,
+    });
+    const { res, getOutput } = createMockResponse();
+    await handler(createValidPostRequest(), res);
+    const response = JSON.parse(getOutput().body);
+    expect(response.bubbles).toEqual([{
+      id: "req-1-ocr-1",
+      bounds: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
+      originalText: "そのまま",
+      translatedText: "そのまま",
+    }]);
+  });
+
+  it.each<readonly [OcrErrorCode, number]>([
+    ["ocr-provider-disabled", 503],
+    ["ocr-no-text", 422],
+    ["ocr-not-configured", 503],
+    ["ocr-auth-failed", 503],
+    ["ocr-rate-limited", 429],
+    ["ocr-timeout", 408],
+  ])("returns only safe allowlisted %s errors", async (code, status) => {
+    const handler = createTranslationRequestHandler({
+      ocrProvider: {
+        ...fakeProviderMetadata,
+        recognize: vi.fn(async () => {
+          throw new OcrFailure(code);
+        }),
+      },
+      logger: () => undefined,
+    });
+    const { res, getOutput } = createMockResponse();
+    await handler(createValidPostRequest(), res);
+    expect(getOutput().status).toBe(status);
+  });
+
+  it("does not log image bytes, OCR text, IDs, hashes, or provider details", async () => {
+    const entries: unknown[] = [];
+    const handler = createTranslationRequestHandler({
+      ocrProvider: {
+        ...fakeProviderMetadata,
+        recognize: vi.fn(async () => ({
+          regions: [{
+            text: "private OCR text",
+            bounds: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+          }],
+        })),
+      },
+      logger: (entry) => entries.push(entry),
+      now: () => 1_000,
+    });
+    const { res } = createMockResponse();
+    await handler(createValidPostRequest(), res);
+    const serialized = JSON.stringify(entries);
+    expect(serialized).not.toContain("private OCR text");
+    expect(serialized).not.toContain("req-1");
+    expect(serialized).not.toContain("page-1");
+    expect(serialized).not.toContain("a".repeat(64));
+    expect(serialized).not.toContain(validPngData.toString("base64"));
+  });
+
+  it("aborts provider work and returns ocr-timeout after client cancellation", async () => {
+    const recognize = vi.fn((
+      _input: OcrInput,
+      signal: AbortSignal
+    ) => new Promise<never>((_resolve, reject) => {
+      signal.addEventListener("abort", () => {
+        reject(new DOMException("cancelled", "AbortError"));
+      }, { once: true });
+    }));
+    const handler = createTranslationRequestHandler({
+      ocrProvider: { ...fakeProviderMetadata, recognize },
+      logger: () => undefined,
+    });
+    const request = createValidPostRequest();
+    const { res, getOutput } = createMockResponse();
+    const promise = handler(request, res);
+    await vi.waitFor(() => expect(recognize).toHaveBeenCalledOnce());
+    request.emit("aborted");
+    await promise;
+    expect(getOutput().status).toBe(408);
+    expect(JSON.parse(getOutput().body)).toEqual({
+      success: false,
+      error: { code: "ocr-timeout" },
+    });
+  });
+
+  it("rejects malformed injected OCR regions through the response contract", async () => {
+    const handler = createTranslationRequestHandler({
+      ocrProvider: {
+        ...fakeProviderMetadata,
+        recognize: vi.fn(async () => ({
+          regions: [{
+            text: "",
+            bounds: { x: 2, y: 0, width: 1, height: 1 },
+          }],
+        })),
+      },
+      logger: () => undefined,
+    });
+    const { res, getOutput } = createMockResponse();
+    await handler(createValidPostRequest(), res);
+    expect(getOutput().status).toBe(422);
+    expect(JSON.parse(getOutput().body)).toEqual({
+      success: false,
+      error: { code: "ocr-invalid-response" },
+    });
   });
 });

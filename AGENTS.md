@@ -32,3 +32,16 @@ scanner-controller page sessions, and keep local/demo services deterministic.
 - Never log or persist captured image payloads.
 - Development servers must bind to loopback only.
 - Redirects and credentials must remain disabled for translation transport.
+- External OCR requests must remain backend-only behind exact allowlisted
+  provider endpoint constants.
+- Google credentials must use server-side ADC and must never enter extension
+  code, messages, storage, or logs.
+- Treat OCR provider responses as untrusted; map failures to safe allowlisted
+  codes and normalize geometry using trusted MangaLens capture dimensions.
+- Never log or persist images or OCR text.
+- Real translation requires a separate reviewed milestone.
+- Extension permissions must never include Google domains.
+- Paid providers require exact explicit opt-in and must never become implicit
+  defaults.
+- Provider identity and local/remote execution metadata must be explicit.
+- Local-first OCR remains the target production architecture.

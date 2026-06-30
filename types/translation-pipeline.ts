@@ -9,6 +9,7 @@ import type { TranslationBubble } from "@/types/translation";
 import { validateTranslationApiSuccessResponse } from "@/types/translation-api";
 
 export type TranslationServiceMode = "local-demo" | "development-api";
+export type TranslationResultKind = "local-demo" | "ocr-preview";
 
 export type TranslationPipelineStage = "capturing" | "processing" | "applying";
 
@@ -67,7 +68,16 @@ export type TranslationPipelineErrorCode =
   | "backend-response-too-large"
   | "backend-invalid-json"
   | "backend-invalid-response"
-  | "backend-timeout";
+  | "backend-timeout"
+  | "ocr-provider-disabled"
+  | "ocr-not-configured"
+  | "ocr-auth-failed"
+  | "ocr-unavailable"
+  | "ocr-rate-limited"
+  | "ocr-timeout"
+  | "ocr-response-too-large"
+  | "ocr-invalid-response"
+  | "ocr-no-text";
 
 export type BackgroundTranslationResponse =
   | {
@@ -75,7 +85,7 @@ export type BackgroundTranslationResponse =
       readonly pageId: string;
       readonly pageNumber: number;
       readonly bubbleCount: number;
-      readonly demo: true;
+      readonly resultKind: TranslationResultKind;
       readonly serviceMode: TranslationServiceMode;
     }
   | {
@@ -123,6 +133,15 @@ const PIPELINE_ERRORS = new Set<string>([
   "backend-invalid-json",
   "backend-invalid-response",
   "backend-timeout",
+  "ocr-provider-disabled",
+  "ocr-not-configured",
+  "ocr-auth-failed",
+  "ocr-unavailable",
+  "ocr-rate-limited",
+  "ocr-timeout",
+  "ocr-response-too-large",
+  "ocr-invalid-response",
+  "ocr-no-text",
 ]);
 
 export function isSourceLanguage(value: unknown): value is SourceLanguage {
@@ -209,15 +228,17 @@ export function isBackgroundTranslationResponse(
   if (!isRecord(value) || typeof value.success !== "boolean") return false;
   if (value.success) {
     return hasOnlyKeys(value, [
-      "success", "pageId", "pageNumber", "bubbleCount", "demo", "serviceMode",
+      "success", "pageId", "pageNumber", "bubbleCount", "resultKind", "serviceMode",
     ]) &&
       isNonEmptyString(value.pageId) &&
       isPositiveInteger(value.pageNumber) &&
       Number.isInteger(value.bubbleCount) &&
       typeof value.bubbleCount === "number" &&
       value.bubbleCount >= 0 &&
-      value.demo === true &&
-      (value.serviceMode === "local-demo" || value.serviceMode === "development-api");
+      (value.serviceMode === "local-demo" || value.serviceMode === "development-api") &&
+      ((value.serviceMode === "local-demo" && value.resultKind === "local-demo") ||
+       (value.serviceMode === "development-api" &&
+        value.resultKind === "ocr-preview"));
   }
   return hasOnlyKeys(value, ["success", "error"]) &&
     isRecord(value.error) &&

@@ -66,7 +66,7 @@ describe("translation pipeline boundaries", () => {
       pageId: "page-1",
       pageNumber: 1,
       bubbleCount: 3,
-      demo: true,
+      resultKind: "local-demo",
       serviceMode: "local-demo",
     })).toBe(true);
     expect(isBackgroundTranslationResponse({
@@ -74,9 +74,25 @@ describe("translation pipeline boundaries", () => {
       pageId: "page-1",
       pageNumber: 1,
       bubbleCount: 3,
-      demo: true,
+      resultKind: "local-demo",
       serviceMode: "local-demo",
       blob: new Blob(),
+    })).toBe(false);
+    expect(isBackgroundTranslationResponse({
+      success: true,
+      pageId: "page-1",
+      pageNumber: 1,
+      bubbleCount: 3,
+      demo: true,
+      serviceMode: "local-demo",
+    })).toBe(false);
+    expect(isBackgroundTranslationResponse({
+      success: true,
+      pageId: "page-1",
+      pageNumber: 1,
+      bubbleCount: 3,
+      resultKind: "ocr-preview",
+      serviceMode: "local-demo",
     })).toBe(false);
   });
 

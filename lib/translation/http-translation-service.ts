@@ -97,10 +97,6 @@ export class HttpTranslationService implements TranslationService {
     if (response.redirected) {
       throw new Error("backend-request-failed");
     }
-    if (response.status < 200 || response.status >= 300) {
-      throw new Error("backend-http-error");
-    }
-
     const contentType = response.headers.get("content-type");
     validateContentType(contentType);
 
@@ -115,11 +111,19 @@ export class HttpTranslationService implements TranslationService {
       if (error instanceof Error && error.message === "backend-response-too-large") {
         throw error;
       }
+      if (response.status < 200 || response.status >= 300) {
+        throw new Error("backend-http-error");
+      }
       throw new Error("backend-request-failed");
     }
 
     if (signal.aborted) {
       throw new DOMException("Translation cancelled", "AbortError");
+    }
+
+    if (response.status < 200 || response.status >= 300) {
+      const ocrError = parseBackendOcrError(bodyBytes);
+      throw new Error(ocrError ?? "backend-http-error");
     }
 
     // 6. Decode UTF-8 and Parse JSON
@@ -146,6 +150,42 @@ export class HttpTranslationService implements TranslationService {
 
     return parsed;
   }
+}
+
+const BACKEND_OCR_ERRORS = new Set<string>([
+  "ocr-provider-disabled",
+  "ocr-not-configured",
+  "ocr-auth-failed",
+  "ocr-unavailable",
+  "ocr-rate-limited",
+  "ocr-timeout",
+  "ocr-response-too-large",
+  "ocr-invalid-response",
+  "ocr-no-text",
+]);
+
+export function parseBackendOcrError(bytes: Uint8Array): string | null {
+  let value: unknown;
+  try {
+    const text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+    value = JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+  if (!isRecord(value) ||
+      Object.keys(value).length !== 2 ||
+      value.success !== false ||
+      !isRecord(value.error) ||
+      Object.keys(value.error).length !== 1 ||
+      typeof value.error.code !== "string" ||
+      !BACKEND_OCR_ERRORS.has(value.error.code)) {
+    return null;
+  }
+  return value.error.code;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 export function validateTranslationUrl(urlStr: string): void {

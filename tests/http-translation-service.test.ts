@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { HttpTranslationService, validateContentType } from "@/lib/translation/http-translation-service";
+import {
+  HttpTranslationService,
+  parseBackendOcrError,
+  validateContentType,
+} from "@/lib/translation/http-translation-service";
 import type { TranslationApiRequestMetadata } from "@/types/translation-api";
 
 const metadata: TranslationApiRequestMetadata = {
@@ -24,6 +28,44 @@ const metadata: TranslationApiRequestMetadata = {
 const imageBlob = new Blob([new Uint8Array(10)], { type: "image/png" });
 
 describe("HttpTranslationService", () => {
+  it.each([
+    "ocr-provider-disabled",
+    "ocr-not-configured",
+    "ocr-auth-failed",
+    "ocr-unavailable",
+    "ocr-rate-limited",
+    "ocr-timeout",
+    "ocr-response-too-large",
+    "ocr-invalid-response",
+    "ocr-no-text",
+  ])("returns allowlisted backend error %s without raw details", async (code) => {
+    const service = new HttpTranslationService({
+      endpoint: "http://127.0.0.1:8787/v1/translate",
+      fetchImpl: vi.fn(async () => new Response(JSON.stringify({
+        success: false,
+        error: { code },
+      }), {
+        status: 422,
+        headers: { "Content-Type": "application/json" },
+      })),
+    });
+    await expect(service.translate({
+      image: imageBlob,
+      metadata,
+    }, new AbortController().signal)).rejects.toThrow(code);
+  });
+
+  it("rejects non-allowlisted backend errors without exposing them", () => {
+    const bytes = new TextEncoder().encode(JSON.stringify({
+      success: false,
+      error: {
+        code: "private-provider-error",
+        message: "credential path and project detail",
+      },
+    }));
+    expect(parseBackendOcrError(bytes)).toBeNull();
+  });
+
   it("selects POST method, credentials omit, redirect error, cache no-store, and multipart body with correct metadata and image filenames", async () => {
     let fetchOptions: RequestInit | undefined;
     let fetchUrl: string | undefined;

@@ -84,7 +84,7 @@ describe("TranslationCoordinator", () => {
       pageId: "page-2",
       pageNumber: 2,
       bubbleCount: 1,
-      demo: true,
+      resultKind: "local-demo",
       serviceMode: "local-demo",
     });
     expect(deps.captureImage).toHaveBeenCalledTimes(1);
@@ -94,6 +94,25 @@ describe("TranslationCoordinator", () => {
       pageId: "page-2",
     }));
     expect(deps.reportStage).toHaveBeenCalledTimes(3);
+  });
+
+  it("returns explicit local-demo and ocr-preview result kinds", async () => {
+    const local = await new TranslationCoordinator(dependencies()).translate({
+      ...request,
+      serviceMode: "local-demo",
+    });
+    const ocr = await new TranslationCoordinator(dependencies()).translate({
+      ...request,
+      serviceMode: "development-api",
+    });
+    expect(local).toMatchObject({
+      success: true,
+      resultKind: "local-demo",
+    });
+    expect(ocr).toMatchObject({
+      success: true,
+      resultKind: "ocr-preview",
+    });
   });
 
   it("builds matching validated request metadata", async () => {
@@ -648,7 +667,7 @@ describe("TranslationCoordinator", () => {
       pageId: "page-2",
       pageNumber: 2,
       bubbleCount: 1,
-      demo: true,
+      resultKind: "ocr-preview",
       serviceMode: "development-api",
     } as const;
     
@@ -661,7 +680,7 @@ describe("TranslationCoordinator", () => {
     expect(keys).not.toContain("apiKey");
   });
 
-  it("returns timeout for local-demo and backend-timeout for development-api upon total deadline expiry", async () => {
+  it("returns timeout for local-demo and ocr-timeout for development-api upon total deadline expiry", async () => {
     vi.useFakeTimers();
     let resolveService!: (value: any) => void;
     const servicePromise = new Promise((resolve) => {
@@ -688,9 +707,39 @@ describe("TranslationCoordinator", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(await promiseDev).toEqual({
       success: false,
-      error: { code: "backend-timeout" },
+      error: { code: "ocr-timeout" },
     });
 
     resolveService({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles });
+  });
+
+  it.each([
+    "ocr-provider-disabled",
+    "ocr-not-configured",
+    "ocr-auth-failed",
+    "ocr-unavailable",
+    "ocr-rate-limited",
+    "ocr-response-too-large",
+    "ocr-invalid-response",
+    "ocr-no-text",
+  ])("preserves safe development OCR error %s", async (code) => {
+    const localService = dependencies().services["local-demo"];
+    const coordinator = new TranslationCoordinator(dependencies({
+      services: {
+        "local-demo": localService,
+        "development-api": {
+          translate: vi.fn(async () => {
+            throw new Error(code);
+          }),
+        },
+      },
+    }));
+    expect(await coordinator.translate({
+      ...request,
+      serviceMode: "development-api",
+    })).toEqual({
+      success: false,
+      error: { code },
+    });
   });
 });

@@ -1,38 +1,79 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Buffer } from "node:buffer";
 import { parseMultipart } from "./multipart";
-import { validateTranslationApiRequestMetadata } from "../../types/translation-api";
-import type { TargetLanguage } from "../../types/extension";
+import {
+  validateTranslationApiRequestMetadata,
+  validateTranslationApiSuccessResponse,
+} from "../../types/translation-api";
+import type { OcrProvider } from "./ocr/ocr-provider";
+import { OcrFailure, ocrErrorCode, ocrErrorStatus } from "./ocr/ocr-errors";
+import { ocrRegionsToBubbles } from "./ocr/ocr-to-bubbles";
+import type { TranslationBubble } from "../../types/translation";
 
-const DEMO_TEXT: Record<TargetLanguage, readonly [string, string, string]> = {
-  en: ["We finally made it.", "Stay alert.", "This is only the beginning."],
-  es: ["Por fin llegamos.", "Mantente alerta.", "Esto es solo el comienzo."],
-  pt: ["Finalmente chegamos.", "Fique alerta.", "Isto é apenas o começo."],
-  fr: ["Nous y sommes enfin.", "Reste sur tes gardes.", "Ce n’est que le début."],
-  it: ["Ce l’abbiamo finalmente fatta.", "Resta in guardia.", "Questo è solo l’inizio."],
-  de: ["Wir haben es endlich geschafft.", "Bleib wachsam.", "Das ist erst der Anfang."],
+export interface BackendLogEntry {
+  readonly timestamp: string;
+  readonly method: string;
+  readonly pathname: string;
+  readonly status: number;
+  readonly durationMs: number;
+  readonly errorCode?: string;
+}
+
+export interface TranslationHandlerDependencies {
+  readonly ocrProvider: OcrProvider;
+  readonly logger?: (entry: BackendLogEntry) => void;
+  readonly now?: () => number;
+}
+
+const fallbackProvider: OcrProvider = {
+  id: "google-vision",
+  execution: "remote",
+  enabled: false,
+  recognize: async () => {
+    throw new OcrFailure("ocr-provider-disabled");
+  },
 };
 
-const BOUNDS = [
-  { x: 0.08, y: 0.08, width: 0.34, height: 0.13 },
-  { x: 0.58, y: 0.24, width: 0.32, height: 0.12 },
-  { x: 0.31, y: 0.73, width: 0.38, height: 0.13 },
-] as const;
+export const handleTranslationRequest = createTranslationRequestHandler({
+  ocrProvider: fallbackProvider,
+});
 
-export async function handleTranslationRequest(
+export function createTranslationRequestHandler(
+  dependencies: TranslationHandlerDependencies
+): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
+  const now = dependencies.now ?? Date.now;
+  const logger = dependencies.logger ?? defaultLogger;
+  return (req, res) => handleRequest(req, res, dependencies.ocrProvider, now, logger);
+}
+
+async function handleRequest(
   req: IncomingMessage,
-  res: ServerResponse
+  res: ServerResponse,
+  ocrProvider: OcrProvider,
+  now: () => number,
+  logger: (entry: BackendLogEntry) => void
 ): Promise<void> {
-  const start = Date.now();
+  const start = now();
   const url = req.url || "";
   const pathname = url.split("?")[0];
   const method = req.method || "";
+  const logRequest = (
+    status: number,
+    errorCode?: string
+  ): void => logger({
+    timestamp: new Date(now()).toISOString(),
+    method,
+    pathname,
+    status,
+    durationMs: Math.max(0, now() - start),
+    ...(errorCode ? { errorCode } : {}),
+  });
 
   // 1. Health check endpoint
   if (pathname === "/health") {
     if (method !== "GET") {
       sendJsonError(res, 405, "method-not-allowed");
-      logRequest(method, pathname, 405, Date.now() - start);
+      logRequest(405, "method-not-allowed");
       return;
     }
     res.writeHead(200, {
@@ -45,9 +86,12 @@ export async function handleTranslationRequest(
         status: "ok",
         service: "mangalens-development-api",
         contractVersion: 1,
+        ocrProvider: ocrProvider.id,
+        ocrExecution: ocrProvider.execution,
+        ocrEnabled: ocrProvider.enabled,
       })
     );
-    logRequest(method, pathname, 200, Date.now() - start);
+    logRequest(200);
     return;
   }
 
@@ -55,7 +99,7 @@ export async function handleTranslationRequest(
   if (pathname === "/v1/translate") {
     if (method !== "POST") {
       sendJsonError(res, 405, "method-not-allowed");
-      logRequest(method, pathname, 405, Date.now() - start);
+      logRequest(405, "method-not-allowed");
       return;
     }
 
@@ -63,7 +107,7 @@ export async function handleTranslationRequest(
     const parsedContentType = parseMultipartContentType(contentTypeHeader);
     if (!parsedContentType) {
       sendJsonError(res, 415, "unsupported-media-type");
-      logRequest(method, pathname, 415, Date.now() - start);
+      logRequest(415, "unsupported-media-type");
       return;
     }
     const { boundary } = parsedContentType;
@@ -73,7 +117,7 @@ export async function handleTranslationRequest(
       const length = parseInt(contentLengthHeader, 10);
       if (Number.isFinite(length) && length > 21 * 1024 * 1024) {
         sendJsonError(res, 413, "payload-too-large");
-        logRequest(method, pathname, 413, Date.now() - start);
+        logRequest(413, "payload-too-large");
         return;
       }
     }
@@ -171,17 +215,15 @@ export async function handleTranslationRequest(
       }
 
       sendJsonError(res, status, code);
-      logRequest(method, pathname, status, Date.now() - start);
+      logRequest(status, code);
       return;
     }
 
     const parts = parseMultipart(body, boundary);
-    // Erase body reference immediately
-    (body as any) = null;
 
     if (parts.length !== 2) {
       sendJsonError(res, 400, "malformed-request");
-      logRequest(method, pathname, 400, Date.now() - start);
+      logRequest(400, "malformed-request");
       return;
     }
 
@@ -190,89 +232,131 @@ export async function handleTranslationRequest(
 
     if (!metadataPart || !imagePart) {
       sendJsonError(res, 400, "malformed-request");
-      logRequest(method, pathname, 400, Date.now() - start);
+      logRequest(400, "malformed-request");
       return;
     }
 
     if (metadataPart.filename !== "metadata.json" || imagePart.filename !== "page.png") {
       sendJsonError(res, 400, "malformed-request");
-      logRequest(method, pathname, 400, Date.now() - start);
+      logRequest(400, "malformed-request");
       return;
     }
 
     if (metadataPart.contentType !== "application/json") {
       sendJsonError(res, 415, "unsupported-media-type");
-      logRequest(method, pathname, 415, Date.now() - start);
+      logRequest(415, "unsupported-media-type");
       return;
     }
 
     if (imagePart.contentType !== "image/png") {
       sendJsonError(res, 415, "unsupported-media-type");
-      logRequest(method, pathname, 415, Date.now() - start);
+      logRequest(415, "unsupported-media-type");
       return;
     }
 
     if (metadataPart.data.length > 64 * 1024) {
       sendJsonError(res, 413, "payload-too-large");
-      logRequest(method, pathname, 413, Date.now() - start);
+      logRequest(413, "payload-too-large");
       return;
     }
 
     if (imagePart.data.length === 0) {
       sendJsonError(res, 400, "malformed-request");
-      logRequest(method, pathname, 400, Date.now() - start);
+      logRequest(400, "malformed-request");
       return;
     }
 
     if (imagePart.data.length > 20 * 1024 * 1024) {
       sendJsonError(res, 413, "payload-too-large");
-      logRequest(method, pathname, 413, Date.now() - start);
+      logRequest(413, "payload-too-large");
       return;
     }
 
     const pngHeader = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
     if (imagePart.data.length < 8 || !imagePart.data.subarray(0, 8).equals(pngHeader)) {
       sendJsonError(res, 400, "malformed-request");
-      logRequest(method, pathname, 400, Date.now() - start);
+      logRequest(400, "malformed-request");
       return;
     }
 
-    let parsedMetadata: any;
+    let parsedMetadata: unknown;
     try {
       parsedMetadata = JSON.parse(metadataPart.data.toString("utf8"));
     } catch {
       sendJsonError(res, 400, "malformed-request");
-      logRequest(method, pathname, 400, Date.now() - start);
+      logRequest(400, "malformed-request");
       return;
     }
 
     const validatedMetadata = validateTranslationApiRequestMetadata(parsedMetadata);
     if (!validatedMetadata) {
       sendJsonError(res, 422, "invalid-contract");
-      logRequest(method, pathname, 422, Date.now() - start);
+      logRequest(422, "invalid-contract");
       return;
     }
 
     if (validatedMetadata.capture.mimeType !== "image/png") {
       sendJsonError(res, 422, "invalid-contract");
-      logRequest(method, pathname, 422, Date.now() - start);
+      logRequest(422, "invalid-contract");
       return;
     }
 
     if (validatedMetadata.capture.byteLength !== imagePart.data.length) {
       sendJsonError(res, 422, "invalid-contract");
-      logRequest(method, pathname, 422, Date.now() - start);
+      logRequest(422, "invalid-contract");
       return;
     }
 
-    const targetLang = validatedMetadata.targetLanguage;
-    const text = DEMO_TEXT[targetLang] || DEMO_TEXT.en;
-    const bubbles = text.map((translatedText, index) => ({
-      id: `${validatedMetadata.pageId}-dev-${index + 1}`,
-      bounds: BOUNDS[index],
-      originalText: `Dev API demo source ${index + 1}`,
-      translatedText,
-    }));
+    const operationController = new AbortController();
+    const onRequestAborted = () => operationController.abort();
+    const onResponseClosed = () => {
+      if (!res.writableEnded) operationController.abort();
+    };
+    req.once("aborted", onRequestAborted);
+    if (typeof res.once === "function") res.once("close", onResponseClosed);
+    const operationTimer = setTimeout(() => operationController.abort(), 14_500);
+    let bubbles: TranslationBubble[];
+    try {
+      const result = await ocrProvider.recognize({
+        image: imagePart.data,
+        mimeType: "image/png",
+        pixelWidth: validatedMetadata.capture.pixelWidth,
+        pixelHeight: validatedMetadata.capture.pixelHeight,
+        sourceLanguage: validatedMetadata.sourceLanguage,
+      }, operationController.signal);
+      if (operationController.signal.aborted) {
+        throw new OcrFailure("ocr-timeout");
+      }
+      if (result.regions.length === 0) {
+        throw new OcrFailure("ocr-no-text");
+      }
+      bubbles = ocrRegionsToBubbles(
+        validatedMetadata.requestId,
+        result.regions
+      );
+      const validatedResponse = validateTranslationApiSuccessResponse({
+        contractVersion: 1,
+        requestId: validatedMetadata.requestId,
+        pageId: validatedMetadata.pageId,
+        bubbles,
+      });
+      if (!validatedResponse) {
+        throw new OcrFailure("ocr-invalid-response");
+      }
+      bubbles = validatedResponse.bubbles;
+    } catch (error: unknown) {
+      const code = operationController.signal.aborted
+        ? "ocr-timeout"
+        : ocrErrorCode(error);
+      const status = ocrErrorStatus(code);
+      sendJsonError(res, status, code);
+      logRequest(status, code);
+      return;
+    } finally {
+      clearTimeout(operationTimer);
+      req.off("aborted", onRequestAborted);
+      if (typeof res.off === "function") res.off("close", onResponseClosed);
+    }
 
     res.writeHead(200, {
       "Content-Type": "application/json",
@@ -288,13 +372,13 @@ export async function handleTranslationRequest(
       })
     );
 
-    logRequest(method, pathname, 200, Date.now() - start);
+    logRequest(200);
     return;
   }
 
   // 3. Fallback for other paths
   sendJsonError(res, 404, "not-found");
-  logRequest(method, pathname, 404, Date.now() - start);
+  logRequest(404, "not-found");
 }
 
 export function parseMultipartContentType(header: string): { boundary: string } | null {
@@ -383,12 +467,10 @@ function sendJsonError(
   );
 }
 
-function logRequest(
-  method: string,
-  pathname: string,
-  status: number,
-  durationMs: number
-): void {
-  const timestamp = new Date().toISOString();
-  console.log(`[${timestamp}] ${method} ${pathname} ${status} - ${durationMs.toFixed(0)}ms`);
+function defaultLogger(entry: BackendLogEntry): void {
+  const errorSuffix = entry.errorCode ? ` ${entry.errorCode}` : "";
+  console.log(
+    `[${entry.timestamp}] ${entry.method} ${entry.pathname} ${entry.status}` +
+    ` - ${entry.durationMs.toFixed(0)}ms${errorSuffix}`
+  );
 }

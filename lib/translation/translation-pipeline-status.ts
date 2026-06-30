@@ -38,6 +38,24 @@ export function translationPipelineErrorMessage(
     case "backend-response-too-large":
     case "backend-invalid-json":
       return "Development translation request failed";
+    case "ocr-provider-disabled":
+      return "Cloud OCR is disabled in the development backend";
+    case "ocr-not-configured":
+      return "Google Vision OCR is not configured";
+    case "ocr-auth-failed":
+      return "Google Vision authentication failed";
+    case "ocr-unavailable":
+      return "OCR service is unavailable";
+    case "ocr-rate-limited":
+      return "OCR rate limit reached. Try again later";
+    case "ocr-timeout":
+      return "OCR timed out";
+    case "ocr-response-too-large":
+      return "OCR response was too large";
+    case "ocr-invalid-response":
+      return "OCR returned an invalid result";
+    case "ocr-no-text":
+      return "No readable text was detected";
     default:
       return "Translation failed";
   }
