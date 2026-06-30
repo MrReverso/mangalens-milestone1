@@ -1,3 +1,5 @@
+// @ts-ignore
+import Tesseract from '@/public/tesseract/tesseract.esm.min.js';
 import type { TranslationBubble } from "@/types/translation";
 import {
   validateTranslationApiRequestMetadata,
@@ -20,7 +22,6 @@ interface PixelBox {
   y: number;
   width: number;
   height: number;
-  text: string;
 }
 
 function detectTextRegionsFromPixels(imageData: ImageData): PixelBox[] {
@@ -84,10 +85,11 @@ function detectTextRegionsFromPixels(imageData: ImageData): PixelBox[] {
       let minR = r, maxR = r;
       
       const queue: [number, number][] = [[c, r]];
+      let head = 0;
       visited[idx] = 1;
 
-      while (queue.length > 0) {
-        const [currC, currR] = queue.shift()!;
+      while (head < queue.length) {
+        const [currC, currR] = queue[head++];
         if (currC < minC) minC = currC;
         if (currC > maxC) maxC = currC;
         if (currR < minR) minR = currR;
@@ -121,35 +123,23 @@ function detectTextRegionsFromPixels(imageData: ImageData): PixelBox[] {
     y: b.minR * blockSize,
     width: (b.maxC - b.minC + 1) * blockSize,
     height: (b.maxR - b.minR + 1) * blockSize,
-    text: "",
   }));
 }
 
-function assignOcrText(
-  box: PixelBox,
-  imageWidth: number,
-  imageHeight: number,
-  pageId: string,
-  pageNumber: number
-): string {
-  if (pageId === "page-1" || pageNumber === 1) {
-    return "VISIBLE PAGE";
+function mapLanguage(lang: string): string {
+  switch (lang) {
+    case "ja":
+      return "jpn+jpn_vert";
+    case "ko":
+      return "kor";
+    case "zh":
+      return "chi_sim";
+    case "en":
+      return "eng";
+    case "auto":
+    default:
+      return "eng+jpn+jpn_vert+kor+chi_sim";
   }
-
-  const rx = (box.x + box.width / 2) / imageWidth;
-  const ry = (box.y + box.height / 2) / imageHeight;
-
-  if (rx < 0.5 && ry < 0.4) {
-    return "Where are we going?";
-  }
-  if (rx > 0.45 && ry > 0.4) {
-    return "We need to leave before sunset.";
-  }
-  if (rx < 0.5 && ry > 0.5) {
-    return "...무엇을요?";
-  }
-
-  return "OCR detected text";
 }
 
 function groupTextRegions(
@@ -250,20 +240,21 @@ implements TranslationService {
     await abortableDelay(this.delayMs, signal);
     throwIfAborted(signal);
 
-    let imageBitmap: ImageBitmap;
+    let imageBitmap: ImageBitmap | null = null;
+    let worker: any = null;
     try {
-      imageBitmap = await createImageBitmap(input.image);
-    } catch {
-      throw new Error("invalid-image");
-    }
+      try {
+        imageBitmap = await createImageBitmap(input.image);
+      } catch {
+        throw new Error("invalid-image");
+      }
 
-    throwIfAborted(signal);
+      throwIfAborted(signal);
 
-    let boxes: PixelBox[];
-    try {
       if (typeof OffscreenCanvas === "undefined") {
         throw new Error("ocr-unavailable");
       }
+
       const canvas = new OffscreenCanvas(imageBitmap.width, imageBitmap.height);
       const ctx = canvas.getContext("2d");
       if (!ctx) throw new Error("ocr-unavailable");
@@ -271,71 +262,127 @@ implements TranslationService {
       const imageData = ctx.getImageData(0, 0, imageBitmap.width, imageBitmap.height);
       
       const rawBoxes = detectTextRegionsFromPixels(imageData);
-      
-      const tempRegions: TempRegion[] = rawBoxes.map((b) => ({
-        x: b.x,
-        y: b.y,
-        width: b.width,
-        height: b.height,
-        text: assignOcrText(
-          b,
-          imageBitmap.width,
-          imageBitmap.height,
-          metadata.pageId,
-          metadata.pageNumber
-        ),
-      }));
+      if (rawBoxes.length === 0) {
+        throw new Error("ocr-no-text");
+      }
+
+      throwIfAborted(signal);
+
+      const tessLangs = mapLanguage(metadata.sourceLanguage);
+
+      try {
+        worker = await Tesseract.createWorker(tessLangs, 1, {
+          workerPath: chrome.runtime.getURL('tesseract/worker.min.js'),
+          corePath: chrome.runtime.getURL('tesseract/tesseract-core.wasm.js'),
+          langPath: chrome.runtime.getURL('tesseract/lang/'),
+          workerBlobURL: false,
+          gzip: false,
+        });
+      } catch {
+        throw new Error("ocr-unavailable");
+      }
+
+      throwIfAborted(signal);
+
+      const recognizedRegions: TempRegion[] = [];
+
+      for (const box of rawBoxes) {
+        throwIfAborted(signal);
+
+        const cropCanvas = new OffscreenCanvas(box.width, box.height);
+        const cropCtx = cropCanvas.getContext("2d");
+        if (!cropCtx) {
+          throw new Error("ocr-unavailable");
+        }
+
+        cropCtx.drawImage(
+          imageBitmap,
+          box.x,
+          box.y,
+          box.width,
+          box.height,
+          0,
+          0,
+          box.width,
+          box.height
+        );
+
+        const cropBlob = await cropCanvas.convertToBlob({ type: "image/png" });
+        throwIfAborted(signal);
+
+        let ocrResult: any;
+        try {
+          ocrResult = await worker.recognize(cropBlob);
+        } catch {
+          throw new Error("ocr-unavailable");
+        }
+        
+        throwIfAborted(signal);
+
+        const text = ocrResult.data.text.trim();
+        if (text) {
+          recognizedRegions.push({
+            x: box.x,
+            y: box.y,
+            width: box.width,
+            height: box.height,
+            text,
+          });
+        }
+      }
+
+      if (recognizedRegions.length === 0) {
+        throw new Error("ocr-no-text");
+      }
+
+      throwIfAborted(signal);
 
       const grouped = groupTextRegions(
-        tempRegions,
+        recognizedRegions,
         imageBitmap.width,
         imageBitmap.height
       );
-      boxes = grouped.map((g) => ({
-        x: g.x,
-        y: g.y,
-        width: g.width,
-        height: g.height,
-        text: g.text,
-      }));
-    } catch (err: any) {
-      if (err.message === "ocr-unavailable" || err.message === "ocr-no-text") {
-        throw err;
+
+      const bubbles: TranslationBubble[] = grouped.map((g, index) => {
+        const bx = Math.max(0, Math.min(1, g.x / imageBitmap!.width));
+        const by = Math.max(0, Math.min(1, g.y / imageBitmap!.height));
+        const bw = Math.max(0, Math.min(1 - bx, g.width / imageBitmap!.width));
+        const bh = Math.max(0, Math.min(1 - by, g.height / imageBitmap!.height));
+
+        return {
+          id: `${metadata.pageId}-local-${index + 1}`,
+          bounds: {
+            x: bx,
+            y: by,
+            width: bw,
+            height: bh,
+          },
+          originalText: g.text,
+          translatedText: g.text,
+        };
+      });
+
+      const sortedBubbles = [...bubbles].sort((a, b) => {
+        if (Math.abs(a.bounds.y - b.bounds.y) > 0.02) {
+          return a.bounds.y - b.bounds.y;
+        }
+        return a.bounds.x - b.bounds.x;
+      });
+
+      return {
+        contractVersion: 1,
+        requestId: metadata.requestId,
+        pageId: metadata.pageId,
+        bubbles: sortedBubbles,
+      };
+    } finally {
+      if (imageBitmap && typeof imageBitmap.close === "function") {
+        imageBitmap.close();
       }
-      throw new Error("ocr-unavailable");
-    }
-
-    if (boxes.length === 0) {
-      throw new Error("ocr-no-text");
-    }
-
-    throwIfAborted(signal);
-
-    const bubbles: TranslationBubble[] = boxes.map((g, index) => ({
-      id: `${metadata.pageId}-local-${index + 1}`,
-      bounds: {
-        x: g.x / imageBitmap.width,
-        y: g.y / imageBitmap.height,
-        width: g.width / imageBitmap.width,
-        height: g.height / imageBitmap.height,
-      },
-      originalText: g.text,
-      translatedText: g.text,
-    }));
-
-    const sortedBubbles = [...bubbles].sort((a, b) => {
-      if (Math.abs(a.bounds.y - b.bounds.y) > 0.02) {
-        return a.bounds.y - b.bounds.y;
+      if (worker) {
+        await worker.terminate();
       }
-      return a.bounds.x - b.bounds.x;
-    });
-
-    return {
-      contractVersion: 1,
-      requestId: metadata.requestId,
-      pageId: metadata.pageId,
-      bubbles: sortedBubbles,
-    };
+    }
   }
 }
 

@@ -8,5 +8,16 @@ export default defineConfig({
     version: '0.1.0',
     permissions: ['storage', 'activeTab', 'scripting'],
     host_permissions: ['http://127.0.0.1:8787/*'],
+    web_accessible_resources: [
+      {
+        resources: [
+          'tesseract/worker.min.js',
+          'tesseract/tesseract-core.wasm.js',
+          'tesseract/tesseract-core.wasm',
+          'tesseract/lang/*.traineddata',
+        ],
+        matches: ['<all_urls>'],
+      },
+    ],
   },
 });

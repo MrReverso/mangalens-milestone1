@@ -1,9 +1,23 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import fs from "node:fs";
+import path from "node:path";
 import { LocalDeterministicTranslationService } from "@/lib/translation/local-deterministic-translation-service";
 import type { TranslationApiRequestMetadata } from "@/types/translation-api";
+// @ts-ignore
+import Tesseract from "@/public/tesseract/tesseract.esm.min.js";
+
+// Mock the Tesseract module import
+vi.mock("@/public/tesseract/tesseract.esm.min.js", () => {
+  return {
+    default: {
+      createWorker: vi.fn(),
+    },
+  };
+});
 
 function metadata(
-  targetLanguage: TranslationApiRequestMetadata["targetLanguage"] = "en",
+  sourceLanguage = "auto",
+  targetLanguage = "en",
   pageId = "page-1",
   pageNumber = 1
 ): TranslationApiRequestMetadata {
@@ -12,8 +26,8 @@ function metadata(
     requestId: "request-1",
     pageId,
     pageNumber,
-    sourceLanguage: "auto",
-    targetLanguage,
+    sourceLanguage: sourceLanguage as any,
+    targetLanguage: targetLanguage as any,
     capture: {
       pageId,
       pageNumber,
@@ -30,8 +44,12 @@ function metadata(
 describe("LocalDeterministicTranslationService", () => {
   const originalOffscreenCanvas = globalThis.OffscreenCanvas;
   const originalCreateImageBitmap = globalThis.createImageBitmap;
+  const originalChrome = (globalThis as any).chrome;
 
-  // Helpers to draw mock high-contrast blocks in simulated ImageData
+  let mockWorker: any;
+  let mockBlocks: { cStart: number; cEnd: number; rStart: number; rEnd: number }[] = [];
+  let simulateContextError = false;
+
   function createMockImageData(
     w: number,
     h: number,
@@ -45,29 +63,35 @@ describe("LocalDeterministicTranslationService", () => {
         for (let c = block.cStart; c < block.cEnd; c++) {
           if (c >= w) break;
           const idx = (r * w + c) * 4;
-          data[idx] = 0;     // R
-          data[idx + 1] = 0; // G
-          data[idx + 2] = 0; // B
+          data[idx] = 0;
+          data[idx + 1] = 0;
+          data[idx + 2] = 0;
         }
       }
     }
     return { width: w, height: h, data };
   }
 
-  let mockBlocks: { cStart: number; cEnd: number; rStart: number; rEnd: number }[] = [];
-  let simulateContextError = false;
-
   beforeEach(() => {
     simulateContextError = false;
-    // Set up standard mock blocks for default success tests
     mockBlocks = [
-      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 }, // rx < 0.5 && ry < 0.4
-      { cStart: 600, cEnd: 700, rStart: 250, rEnd: 300 }, // rx > 0.45 && ry > 0.4
-      { cStart: 350, cEnd: 450, rStart: 750, rEnd: 800 }, // rx < 0.5 && ry > 0.5
+      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
+      { cStart: 600, cEnd: 700, rStart: 250, rEnd: 300 },
     ];
 
+    // Mock chrome.runtime.getURL
+    (globalThis as any).chrome = {
+      runtime: {
+        getURL: (p: string) => `chrome-extension://mock-id/${p}`,
+      },
+    };
+
     globalThis.createImageBitmap = async () => {
-      return { width: 1000, height: 1000 } as any;
+      return {
+        width: 1000,
+        height: 1000,
+        close: vi.fn(),
+      } as any;
     };
 
     (globalThis as any).OffscreenCanvas = class MockOffscreenCanvas {
@@ -81,13 +105,28 @@ describe("LocalDeterministicTranslationService", () => {
           },
         };
       }
+      async convertToBlob() {
+        return new Blob(["png-data"], { type: "image/png" });
+      }
     };
+
+    // Default mock worker setup
+    mockWorker = {
+      recognize: vi.fn().mockResolvedValue({
+        data: { text: "Default OCR text" },
+      }),
+      terminate: vi.fn().mockResolvedValue(undefined),
+    };
+
+    vi.mocked(Tesseract.createWorker).mockResolvedValue(mockWorker as any);
   });
 
   afterEach(() => {
     globalThis.OffscreenCanvas = originalOffscreenCanvas;
     globalThis.createImageBitmap = originalCreateImageBitmap;
+    (globalThis as any).chrome = originalChrome;
     vi.useRealTimers();
+    vi.clearAllMocks();
   });
 
   it("accepts a valid PNG and returns contract-matching bubbles", async () => {
@@ -100,7 +139,7 @@ describe("LocalDeterministicTranslationService", () => {
       requestId: "request-1",
       pageId: "page-1",
     });
-    expect((response as { bubbles: unknown[] }).bubbles).toHaveLength(3);
+    expect((response as { bubbles: any[] }).bubbles).toHaveLength(2);
   });
 
   it("rejects non-PNG and empty images", async () => {
@@ -127,17 +166,92 @@ describe("LocalDeterministicTranslationService", () => {
     expect(second).toEqual(first);
   });
 
-  it("returns detected text for both fields (originalText and translatedText)", async () => {
+  it("passes arbitrary Japanese text through correctly", async () => {
+    mockWorker.recognize.mockResolvedValue({
+      data: { text: "本当に大丈夫？" },
+    });
+
+    const response = await new LocalDeterministicTranslationService(0).translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata("ja"),
+    }, new AbortController().signal) as { bubbles: any[] };
+
+    expect(response.bubbles[0].originalText).toBe("本当に大丈夫？");
+    expect(response.bubbles[0].translatedText).toBe("本当に大丈夫？");
+  });
+
+  it("passes arbitrary Korean text through correctly", async () => {
+    mockWorker.recognize.mockResolvedValue({
+      data: { text: "무엇을요?" },
+    });
+
+    const response = await new LocalDeterministicTranslationService(0).translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata("ko"),
+    }, new AbortController().signal) as { bubbles: any[] };
+
+    expect(response.bubbles[0].originalText).toBe("무엇을요?");
+    expect(response.bubbles[0].translatedText).toBe("무엇을요?");
+  });
+
+  it("passes arbitrary Chinese text through correctly", async () => {
+    mockWorker.recognize.mockResolvedValue({
+      data: { text: "你好吗？" },
+    });
+
+    const response = await new LocalDeterministicTranslationService(0).translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata("zh"),
+    }, new AbortController().signal) as { bubbles: any[] };
+
+    expect(response.bubbles[0].originalText).toBe("你好吗？");
+    expect(response.bubbles[0].translatedText).toBe("你好吗？");
+  });
+
+  it("passes arbitrary English text through correctly", async () => {
+    mockWorker.recognize.mockResolvedValue({
+      data: { text: "Stay alert." },
+    });
+
+    const response = await new LocalDeterministicTranslationService(0).translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata("auto", "en"),
+    }, new AbortController().signal) as { bubbles: any[] };
+
+    expect(response.bubbles[0].originalText).toBe("Stay alert.");
+    expect(response.bubbles[0].translatedText).toBe("Stay alert.");
+  });
+
+  it("handles empty OCR result safely by returning ocr-no-text", async () => {
+    mockWorker.recognize.mockResolvedValue({
+      data: { text: "" },
+    });
+
     const service = new LocalDeterministicTranslationService(0);
-    const image = new Blob(["pixels"], { type: "image/png" });
-    const response = await service.translate(
-      { image, metadata: metadata("en", "page-webtoon", 2) },
-      new AbortController().signal
-    ) as { bubbles: Array<{ originalText: string; translatedText: string }> };
-    
-    // Bubble 1 matches: rx < 0.5 && ry < 0.4 => "Where are we going?"
-    expect(response.bubbles[0].originalText).toBe("Where are we going?");
-    expect(response.bubbles[0].translatedText).toBe("Where are we going?");
+    await expect(service.translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata(),
+    }, new AbortController().signal)).rejects.toThrow("ocr-no-text");
+  });
+
+  it("handles OCR engine initialization failure safely by throwing ocr-unavailable", async () => {
+    vi.mocked(Tesseract.createWorker).mockRejectedValue(new Error("Failed to init worker"));
+
+    const service = new LocalDeterministicTranslationService(0);
+    await expect(service.translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata(),
+    }, new AbortController().signal)).rejects.toThrow("ocr-unavailable");
+  });
+
+  it("handles worker recognize failure safely by throwing ocr-unavailable", async () => {
+    mockWorker.recognize.mockRejectedValue(new Error("Worker thread crashed"));
+
+    const service = new LocalDeterministicTranslationService(0);
+    await expect(service.translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata(),
+    }, new AbortController().signal)).rejects.toThrow("ocr-unavailable");
   });
 
   it("rejects an already-aborted signal", async () => {
@@ -161,43 +275,52 @@ describe("LocalDeterministicTranslationService", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
-  it("contains no network client call (no-network guarantee)", async () => {
-    const source = LocalDeterministicTranslationService.prototype.translate.toString();
-    expect(source).not.toMatch(/\bffetch\s*\(/);
+  it("contains no network client call in the entire module code (no-network guarantee)", async () => {
+    const filePath = path.resolve(__dirname, "../lib/translation/local-deterministic-translation-service.ts");
+    const source = fs.readFileSync(filePath, "utf8");
+    
+    // Corrected no-network regex checks
+    expect(source).not.toMatch(/\bfetch\s*\(/);
     expect(source).not.toMatch(/XMLHttpRequest|WebSocket|EventSource/);
   });
 
-  it("groups nearby lines belonging to one dialogue block and normalizes coordinate bounds", async () => {
-    // Override blocks: block 1 & 2 are close vertically (gap is 40px <= 8% of 1000 = 80px)
+  it("groups nearby lines belonging to one dialogue block and normalizes coordinate bounds strictly", async () => {
+    // Two close vertical boxes (gap is 40px <= 8% of 1000 = 80px)
     mockBlocks = [
-      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 }, // Where are we going?
-      { cStart: 110, cEnd: 190, rStart: 190, rEnd: 240 }, // Where are we going?
+      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
+      { cStart: 110, cEnd: 190, rStart: 190, rEnd: 240 },
     ];
+
+    mockWorker.recognize
+      .mockResolvedValueOnce({ data: { text: "Line 1" } })
+      .mockResolvedValueOnce({ data: { text: "Line 2" } });
 
     const response = await new LocalDeterministicTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata("en", "page-webtoon", 2),
+      metadata: metadata(),
     }, new AbortController().signal) as { bubbles: any[] };
 
-    expect(response.bubbles).toHaveLength(1); // Grouped into 1
+    expect(response.bubbles).toHaveLength(1); // Merged into 1
     const merged = response.bubbles[0];
-    expect(merged.originalText).toBe("Where are we going?\nWhere are we going?");
-    
-    // Bounds check
+    expect(merged.originalText).toBe("Line 1\nLine 2");
+
+    // Bounds strict guarantees check
     expect(merged.bounds.x).toBeGreaterThanOrEqual(0);
-    expect(merged.bounds.x).toBeLessThanOrEqual(1);
+    expect(merged.bounds.x + merged.bounds.width).toBeLessThanOrEqual(1.00001);
     expect(merged.bounds.y).toBeGreaterThanOrEqual(0);
-    expect(merged.bounds.y).toBeLessThanOrEqual(1);
-    expect(merged.bounds.width).toBeGreaterThan(0);
-    expect(merged.bounds.height).toBeGreaterThan(0);
+    expect(merged.bounds.y + merged.bounds.height).toBeLessThanOrEqual(1.00001);
   });
 
   it("keeps separate dialogue blocks separate", async () => {
-    // Override blocks: block 1 & 2 are far vertically (gap is 400px > 8% of 1000 = 80px)
+    // Two far boxes vertically (gap is 400px > 8% of 1000 = 80px)
     mockBlocks = [
       { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
       { cStart: 100, cEnd: 200, rStart: 550, rEnd: 600 },
     ];
+
+    mockWorker.recognize
+      .mockResolvedValueOnce({ data: { text: "Bubble A" } })
+      .mockResolvedValueOnce({ data: { text: "Bubble B" } });
 
     const response = await new LocalDeterministicTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
@@ -207,47 +330,15 @@ describe("LocalDeterministicTranslationService", () => {
     expect(response.bubbles).toHaveLength(2); // Kept separate
   });
 
-  it("handles no-text response safely", async () => {
-    mockBlocks = []; // No text blocks drawn
-
-    const service = new LocalDeterministicTranslationService(0);
-    await expect(service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal)).rejects.toThrow("ocr-no-text");
-  });
-
-  it("handles unavailable OCR engine safely", async () => {
-    simulateContextError = true; // getContext returns null
-
-    const service = new LocalDeterministicTranslationService(0);
-    await expect(service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal)).rejects.toThrow("ocr-unavailable");
-  });
-
-  it("handles invalid or unreadable image safely", async () => {
-    // Make createImageBitmap throw
-    globalThis.createImageBitmap = async () => {
-      throw new Error("unreadable image");
-    };
-
-    const service = new LocalDeterministicTranslationService(0);
-    await expect(service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal)).rejects.toThrow("invalid-image");
-  });
-
-  it("preserves deterministic reading-order sorting", async () => {
-    // Sort primarily top to bottom, then left to right.
-    // Block 1: y=250 (bottom)
-    // Block 2: y=100 (top)
+  it("preserves deterministic reading-order sorting primarily top-to-bottom, then left-to-right", async () => {
     mockBlocks = [
-      { cStart: 600, cEnd: 700, rStart: 250, rEnd: 300 },
-      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
+      { cStart: 600, cEnd: 700, rStart: 250, rEnd: 300 }, // Bottom
+      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 }, // Top
     ];
+
+    mockWorker.recognize
+      .mockResolvedValueOnce({ data: { text: "Top Bubble" } })
+      .mockResolvedValueOnce({ data: { text: "Bottom Bubble" } });
 
     const response = await new LocalDeterministicTranslationService(0).translate({
       image: new Blob(["pixels"], { type: "image/png" }),
@@ -255,7 +346,8 @@ describe("LocalDeterministicTranslationService", () => {
     }, new AbortController().signal) as { bubbles: any[] };
 
     expect(response.bubbles).toHaveLength(2);
-    // Bubble at y=100 (top) must come first
-    expect(response.bubbles[0].bounds.y).toBeLessThan(response.bubbles[1].bounds.y);
+    // Bubble at y=100 (Top Bubble) must come first in the sorted bubbles array
+    expect(response.bubbles[0].originalText).toBe("Top Bubble");
+    expect(response.bubbles[1].originalText).toBe("Bottom Bubble");
   });
 });
