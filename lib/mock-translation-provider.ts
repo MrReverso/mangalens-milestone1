@@ -42,18 +42,41 @@ export class MockTranslationProvider implements TranslationProvider {
 
 function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    if (signal.aborted) {
-      reject(new DOMException("Translation cancelled", "AbortError"));
-      return;
-    }
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const cleanup = () => {
+      signal.removeEventListener("abort", onAbort);
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    };
+
     const onAbort = () => {
-      clearTimeout(timer);
+      if (settled) return;
+      settled = true;
+      cleanup();
       reject(new DOMException("Translation cancelled", "AbortError"));
     };
-    const timer = setTimeout(() => {
-      signal.removeEventListener("abort", onAbort);
+
+    const onComplete = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
       resolve();
-    }, ms);
+    };
+
     signal.addEventListener("abort", onAbort, { once: true });
+    if (signal.aborted) {
+      onAbort();
+      return;
+    }
+
+    timer = setTimeout(onComplete, ms);
+
+    // Recheck after timer setup so an abort around listener registration
+    // cannot leave a live timer or resolve cancelled work.
+    if (signal.aborted) onAbort();
   });
 }

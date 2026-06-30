@@ -114,8 +114,58 @@ describe("TranslationOverlayManager", () => {
       ?.style.display).toBe("none");
     manager.setVisible(true);
     expect(manager.pageCount).toBe(1);
-    expect(document.querySelector(".mangalens-translation-bubble")
-      ?.textContent).toBe("Translated");
+    const bubble = document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    );
+    expect(bubble?.textContent).toBe("Translated");
+    expect(bubble?.style.display).toBe("flex");
+    expect(document.querySelectorAll(".mangalens-translation-bubble"))
+      .toHaveLength(1);
+    manager.clear();
+  });
+
+  it("shows bubbles rendered while translations were hidden", () => {
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1000, 500)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.setVisible(false);
+    manager.renderPage("page-1", image, bubbles);
+
+    const root = document.getElementById("mangalens-translation-overlay-root");
+    const bubble = document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    );
+    expect(root?.style.display).toBe("none");
+    expect(bubble?.style.display).toBe("flex");
+
+    manager.setVisible(true);
+    expect(root?.style.display).toBe("block");
+    expect(bubble?.style.display).toBe("flex");
+    expect(bubble?.textContent).toBe("Translated");
+    expect(manager.pageCount).toBe(1);
+    manager.clear();
+  });
+
+  it("repeated visibility changes reuse one root and one bubble", () => {
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1000, 500)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", image, bubbles);
+    manager.setVisible(false);
+    manager.setVisible(true);
+    manager.setVisible(false);
+    manager.setVisible(true);
+    expect(document.querySelectorAll("#mangalens-translation-overlay-root"))
+      .toHaveLength(1);
+    expect(document.querySelectorAll(".mangalens-translation-bubble"))
+      .toHaveLength(1);
+    expect(manager.pageCount).toBe(1);
     manager.clear();
   });
 });

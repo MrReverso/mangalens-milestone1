@@ -52,6 +52,43 @@ describe("MockTranslationProvider", () => {
     expect(vi.getTimerCount()).toBe(0);
   });
 
+  it("rejects immediately when the signal is already aborted", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    controller.abort();
+    const promise = new MockTranslationProvider(400)
+      .translatePage(baseInput, controller.signal);
+    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("removes its abort listener after normal completion", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    const removeListener = vi.spyOn(controller.signal, "removeEventListener");
+    const promise = new MockTranslationProvider(400)
+      .translatePage(baseInput, controller.signal);
+    await vi.advanceTimersByTimeAsync(400);
+    await expect(promise).resolves.toMatchObject({ pageId: "page-1" });
+    expect(removeListener).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("never resolves successfully after cancellation", async () => {
+    vi.useFakeTimers();
+    const controller = new AbortController();
+    let resolved = false;
+    const promise = new MockTranslationProvider(400)
+      .translatePage(baseInput, controller.signal)
+      .then(() => {
+        resolved = true;
+      });
+    controller.abort();
+    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+    await vi.runAllTimersAsync();
+    expect(resolved).toBe(false);
+  });
+
   it("rejects invalid or non-finite normalized coordinates", () => {
     expect(() => validateNormalizedRect({
       x: Number.NaN, y: 0, width: 0.2, height: 0.2,

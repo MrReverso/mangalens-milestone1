@@ -40,7 +40,7 @@ export class TranslationOverlayManager {
       Object.assign(element.style, {
         position: "absolute",
         boxSizing: "border-box",
-        display: this.visible ? "flex" : "none",
+        display: "flex",
         alignItems: "center",
         justifyContent: "center",
         padding: "6px 8px",
