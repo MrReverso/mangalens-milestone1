@@ -223,6 +223,48 @@ function groupTextRegions(
   return current;
 }
 
+async function runWithAbortAndTimeout<T>(
+  task: () => Promise<T>,
+  signal: AbortSignal,
+  timeoutMs: number,
+  workerRef: { worker: any }
+): Promise<T> {
+  if (signal.aborted) {
+    throw new DOMException("Local translation cancelled", "AbortError");
+  }
+
+  let onAbort: () => void;
+  let timer: any;
+
+  const abortPromise = new Promise<never>((_, reject) => {
+    onAbort = () => {
+      if (workerRef.worker) {
+        workerRef.worker.terminate().catch(() => {});
+        workerRef.worker = null;
+      }
+      reject(new DOMException("Local translation cancelled", "AbortError"));
+    };
+    signal.addEventListener("abort", onAbort);
+  });
+
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      if (workerRef.worker) {
+        workerRef.worker.terminate().catch(() => {});
+        workerRef.worker = null;
+      }
+      reject(new Error("ocr-timeout"));
+    }, timeoutMs);
+  });
+
+  try {
+    return await Promise.race([task(), abortPromise, timeoutPromise]);
+  } finally {
+    signal.removeEventListener("abort", onAbort!);
+    clearTimeout(timer);
+  }
+}
+
 export class LocalDeterministicTranslationService
 implements TranslationService {
   constructor(private readonly delayMs = 120) {}
@@ -241,7 +283,7 @@ implements TranslationService {
     throwIfAborted(signal);
 
     let imageBitmap: ImageBitmap | null = null;
-    let worker: any = null;
+    const workerRef = { worker: null as any };
     try {
       try {
         imageBitmap = await createImageBitmap(input.image);
@@ -271,14 +313,24 @@ implements TranslationService {
       const tessLangs = mapLanguage(metadata.sourceLanguage);
 
       try {
-        worker = await Tesseract.createWorker(tessLangs, 1, {
-          workerPath: chrome.runtime.getURL('tesseract/worker.min.js'),
-          corePath: chrome.runtime.getURL('tesseract/tesseract-core.wasm.js'),
-          langPath: chrome.runtime.getURL('tesseract/lang/'),
-          workerBlobURL: false,
-          gzip: false,
-        });
-      } catch {
+        await runWithAbortAndTimeout(
+          async () => {
+            workerRef.worker = await Tesseract.createWorker(tessLangs, 1, {
+              workerPath: chrome.runtime.getURL('tesseract/worker.min.js'),
+              corePath: chrome.runtime.getURL('tesseract/'),
+              langPath: chrome.runtime.getURL('tesseract/lang'),
+              workerBlobURL: false,
+              gzip: false,
+            });
+          },
+          signal,
+          25000,
+          workerRef
+        );
+      } catch (err: any) {
+        if (err.name === "AbortError" || err.message === "ocr-timeout") {
+          throw err;
+        }
         throw new Error("ocr-unavailable");
       }
 
@@ -312,8 +364,18 @@ implements TranslationService {
 
         let ocrResult: any;
         try {
-          ocrResult = await worker.recognize(cropBlob);
-        } catch {
+          await runWithAbortAndTimeout(
+            async () => {
+              ocrResult = await workerRef.worker.recognize(cropBlob);
+            },
+            signal,
+            25000,
+            workerRef
+          );
+        } catch (err: any) {
+          if (err.name === "AbortError" || err.message === "ocr-timeout") {
+            throw err;
+          }
           throw new Error("ocr-unavailable");
         }
         
@@ -379,8 +441,8 @@ implements TranslationService {
       if (imageBitmap && typeof imageBitmap.close === "function") {
         imageBitmap.close();
       }
-      if (worker) {
-        await worker.terminate();
+      if (workerRef.worker) {
+        await workerRef.worker.terminate().catch(() => {});
       }
     }
   }

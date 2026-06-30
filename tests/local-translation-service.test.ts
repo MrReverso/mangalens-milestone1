@@ -263,16 +263,58 @@ describe("LocalDeterministicTranslationService", () => {
     }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
   });
 
-  it("cancels during processing (timeout/abort)", async () => {
-    vi.useFakeTimers();
+  it("aborts immediately when recognize is pending and terminates the worker", async () => {
+    let resolveRecognize: any;
+    const pendingPromise = new Promise((resolve) => {
+      resolveRecognize = resolve;
+    });
+
+    mockWorker.recognize.mockReturnValue(pendingPromise);
+
     const controller = new AbortController();
-    const promise = new LocalDeterministicTranslationService(100).translate({
+    const service = new LocalDeterministicTranslationService(0);
+
+    const promise = service.translate({
       image: new Blob(["pixels"], { type: "image/png" }),
       metadata: metadata(),
     }, controller.signal);
+
+    promise.catch(() => {});
+
+    // Let the event loop run to hit the recognize call
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Abort the operation
     controller.abort();
+
     await expect(promise).rejects.toMatchObject({ name: "AbortError" });
-    expect(vi.getTimerCount()).toBe(0);
+    expect(mockWorker.terminate).toHaveBeenCalled();
+
+    // Clean up the promise
+    resolveRecognize({ data: { text: "" } });
+  });
+
+  it("timeouts when recognize is permanently pending and terminates the worker", async () => {
+    vi.useFakeTimers();
+
+    const pendingPromise = new Promise(() => {}); // Permanently pending
+    mockWorker.recognize.mockReturnValue(pendingPromise);
+
+    const controller = new AbortController();
+    const service = new LocalDeterministicTranslationService(0);
+
+    const promise = service.translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata(),
+    }, controller.signal);
+
+    promise.catch(() => {});
+
+    // Advance time asynchronously to get past both abortableDelay and OCR timeout
+    await vi.advanceTimersByTimeAsync(26000);
+
+    await expect(promise).rejects.toThrow("ocr-timeout");
+    expect(mockWorker.terminate).toHaveBeenCalled();
   });
 
   it("contains no network client call in the entire module code (no-network guarantee)", async () => {
