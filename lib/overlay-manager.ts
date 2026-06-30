@@ -70,7 +70,6 @@ export class OverlayManager {
       border: `${OUTLINE_WIDTH}px solid ${ACCENT_COLOR}`,
       borderRadius: "3px",
       pointerEvents: "none",
-      transition: "top 0.08s linear, left 0.08s linear, width 0.08s linear, height 0.08s linear",
     } as CSSStyleDeclaration);
 
     const badge = document.createElement("span");
@@ -104,14 +103,12 @@ export class OverlayManager {
    */
   private positionMarker(img: HTMLImageElement, marker: HTMLElement): void {
     const rect = img.getBoundingClientRect();
-    const scrollX = window.scrollX;
-    const scrollY = window.scrollY;
 
     Object.assign(marker.style, {
-      top: `${rect.top + scrollY - OUTLINE_WIDTH}px`,
-      left: `${rect.left + scrollX - OUTLINE_WIDTH}px`,
-      width: `${rect.width + OUTLINE_WIDTH * 2}px`,
-      height: `${rect.height + OUTLINE_WIDTH * 2}px`,
+      top: `${rect.top}px`,
+      left: `${rect.left}px`,
+      width: `${rect.width}px`,
+      height: `${rect.height}px`,
     } as CSSStyleDeclaration);
   }
 
@@ -120,8 +117,10 @@ export class OverlayManager {
    */
   updateAllPositions(): void {
     for (const [img, marker] of this.markers) {
-      // Verify the image is still in the DOM.
-      if (!document.contains(img)) continue;
+      if (!document.contains(img)) {
+        this.removeMarker(img);
+        continue;
+      }
       this.positionMarker(img, marker);
     }
   }
@@ -135,7 +134,10 @@ export class OverlayManager {
     this.throttledUpdate = throttle(() => this.updateAllPositions(), THROTTLE_MS);
 
     this.scrollHandler = this.throttledUpdate;
-    window.addEventListener("scroll", this.scrollHandler, { passive: true });
+    window.addEventListener("scroll", this.scrollHandler, {
+      capture: true,
+      passive: true,
+    });
 
     this.resizeHandler = this.throttledUpdate;
     window.addEventListener("resize", this.resizeHandler, { passive: true });
@@ -154,7 +156,7 @@ export class OverlayManager {
    */
   stopListening(): void {
     if (this.scrollHandler) {
-      window.removeEventListener("scroll", this.scrollHandler);
+      window.removeEventListener("scroll", this.scrollHandler, true);
       this.scrollHandler = null;
     }
     if (this.resizeHandler) {
@@ -200,6 +202,18 @@ export class OverlayManager {
     if (this.resizeObserver && document.contains(img)) {
       this.resizeObserver.observe(img);
     }
+  }
+
+  /**
+   * Remove one image's marker and stop tracking its size.
+   */
+  removeMarker(img: HTMLImageElement): void {
+    const marker = this.markers.get(img);
+    if (!marker) return;
+
+    this.resizeObserver?.unobserve(img);
+    marker.remove();
+    this.markers.delete(img);
   }
 }
 

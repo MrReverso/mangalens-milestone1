@@ -39,14 +39,41 @@ const INITIAL_STATUS: StatusState = {
 // The content script is an unlisted script injected programmatically.
 // We attempt to communicate first; if that fails we inject and retry.
 
-async function ensureContentScript(tabId: number): Promise<void> {
+const RESTRICTED_PROTOCOLS = new Set([
+  "about:",
+  "chrome:",
+  "chrome-extension:",
+  "devtools:",
+  "edge:",
+  "view-source:",
+]);
+
+function canRunOnPage(url: string | undefined): boolean {
+  if (!url) return false;
+  try {
+    const parsed = new URL(url);
+    if (RESTRICTED_PROTOCOLS.has(parsed.protocol)) return false;
+    if (parsed.hostname === "chrome.google.com" &&
+        parsed.pathname.startsWith("/webstore")) return false;
+    if (parsed.hostname === "chromewebstore.google.com") return false;
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+async function ensureContentScript(tab: chrome.tabs.Tab): Promise<void> {
+  if (!tab.id || !canRunOnPage(tab.url)) {
+    throw new Error("restricted-page");
+  }
+
   try {
     // Probe: if the content script is already injected, this succeeds.
-    await chrome.tabs.sendMessage(tabId, { type: "GET_SCAN_STATUS" as const });
+    await chrome.tabs.sendMessage(tab.id, { type: "GET_SCAN_STATUS" as const });
   } catch {
     // Content script not present — inject it.
     await chrome.scripting.executeScript({
-      target: { tabId },
+      target: { tabId: tab.id },
       files: ["unlisted-content.js"],
     });
   }
@@ -127,13 +154,16 @@ export default function App() {
     try {
       const tab = await getActiveTab();
       if (!tab.id) {
-        setStatus({ kind: "no-access", message: "This page cannot be accessed" });
+        setStatus({
+          kind: "no-access",
+          message: "MangaLens cannot run on this page",
+        });
         setIsScanning(false);
         return;
       }
 
       // Ensure the content script is injected before sending commands.
-      await ensureContentScript(tab.id);
+      await ensureContentScript(tab);
 
       const response: ScanPageResponse = await chrome.tabs.sendMessage(
         tab.id,
@@ -155,7 +185,14 @@ export default function App() {
       } else {
         setStatus({ kind: "error", message: response.error });
       }
-    } catch {
+    } catch (error: unknown) {
+      if (error instanceof Error && error.message === "restricted-page") {
+        setStatus({
+          kind: "no-access",
+          message: "MangaLens cannot run on this page",
+        });
+        return;
+      }
       setStatus({
         kind: "error",
         message: "An unexpected error occurred",
