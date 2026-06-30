@@ -12,6 +12,8 @@ import { getSettings, saveSettings } from "@/lib/storage";
 import type {
   ScanPageResponse,
   ScanStatusResponse,
+  TranslationCommandResponse,
+  TranslationStatusResponse,
 } from "@/lib/messages";
 import "./style.css";
 
@@ -87,30 +89,32 @@ export default function App() {
   const [status, setStatus] = useState<StatusState>(INITIAL_STATUS);
   const [isScanning, setIsScanning] = useState(false);
   const [hasMarkers, setHasMarkers] = useState(false);
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [translationsVisible, setTranslationsVisible] = useState(true);
+  const [hasTranslations, setHasTranslations] = useState(false);
 
   // ── Load persisted settings on mount ─────────────────────────
   useEffect(() => {
     getSettings().then((settings) => {
       setSourceLanguage(settings.sourceLanguage);
       setTargetLanguage(settings.targetLanguage);
+      setTranslationsVisible(settings.translationsVisible);
+      checkScanStatus(settings.translationsVisible);
     });
-
-    // Check if there's an active scan on the current tab.
-    checkScanStatus();
   }, []);
 
   // ── Persist language changes ─────────────────────────────────
   const handleSourceChange = useCallback((value: string) => {
     const lang = value as SourceLanguage;
     setSourceLanguage(lang);
-    saveSettings({ sourceLanguage: lang, targetLanguage });
-  }, [targetLanguage]);
+    saveSettings({ sourceLanguage: lang, targetLanguage, translationsVisible });
+  }, [targetLanguage, translationsVisible]);
 
   const handleTargetChange = useCallback((value: string) => {
     const lang = value as TargetLanguage;
     setTargetLanguage(lang);
-    saveSettings({ sourceLanguage, targetLanguage: lang });
-  }, [sourceLanguage]);
+    saveSettings({ sourceLanguage, targetLanguage: lang, translationsVisible });
+  }, [sourceLanguage, translationsVisible]);
 
   // ── Get active tab ────────────────────────────────────────────
   async function getActiveTab(): Promise<chrome.tabs.Tab> {
@@ -125,7 +129,7 @@ export default function App() {
   }
 
   // ── Check existing scan status ───────────────────────────────
-  async function checkScanStatus(): Promise<void> {
+  async function checkScanStatus(preferredVisibility: boolean): Promise<void> {
     try {
       const tab = await getActiveTab();
       if (!tab.id) return;
@@ -140,6 +144,15 @@ export default function App() {
           kind: "success",
           message: `${response.detectedImages} manga pages detected`,
         });
+        await chrome.tabs.sendMessage(tab.id, {
+          type: "SET_TRANSLATIONS_VISIBLE" as const,
+          visible: preferredVisibility,
+        });
+        const translationStatus: TranslationStatusResponse =
+          await chrome.tabs.sendMessage(tab.id, {
+            type: "GET_TRANSLATION_STATUS" as const,
+          });
+        applyTranslationStatus(translationStatus);
       }
     } catch {
       // Content script not injected yet — that's expected.
@@ -164,6 +177,10 @@ export default function App() {
 
       // Ensure the content script is injected before sending commands.
       await ensureContentScript(tab);
+      await chrome.tabs.sendMessage(tab.id, {
+        type: "SET_TRANSLATIONS_VISIBLE" as const,
+        visible: translationsVisible,
+      });
 
       const response: ScanPageResponse = await chrome.tabs.sendMessage(
         tab.id,
@@ -202,6 +219,89 @@ export default function App() {
     }
   }
 
+  function applyTranslationStatus(value: TranslationStatusResponse): void {
+    const active = value.queuedPages + value.translatingPages > 0;
+    setIsTranslating(active);
+    setHasTranslations(value.completedPages > 0);
+    setTranslationsVisible(value.translationsVisible);
+    if (active) {
+      setStatus({
+        kind: "scanning",
+        message: `${value.completedPages} of ${value.totalPages} pages translated`,
+      });
+    } else if (value.failedPages > 0) {
+      setStatus({ kind: "error", message: "Translation preview failed" });
+    } else if (value.completedPages > 0 &&
+               value.completedPages === value.totalPages) {
+      setStatus({ kind: "success", message: "Translation preview complete" });
+    }
+  }
+
+  async function pollTranslationStatus(tabId: number): Promise<void> {
+    const response: TranslationStatusResponse = await chrome.tabs.sendMessage(
+      tabId,
+      { type: "GET_TRANSLATION_STATUS" as const }
+    );
+    applyTranslationStatus(response);
+    if (response.queuedPages + response.translatingPages > 0) {
+      window.setTimeout(() => {
+        pollTranslationStatus(tabId).catch(() => {
+          setIsTranslating(false);
+          setStatus({ kind: "error", message: "Translation preview failed" });
+        });
+      }, 150);
+    }
+  }
+
+  async function handlePreviewTranslation(): Promise<void> {
+    setIsTranslating(true);
+    setStatus({ kind: "scanning", message: "Preparing translations\u2026" });
+    try {
+      const tab = await getActiveTab();
+      await ensureContentScript(tab);
+      const response: TranslationCommandResponse =
+        await chrome.tabs.sendMessage(tab.id!, {
+          type: "START_MOCK_TRANSLATION" as const,
+          sourceLanguage,
+          targetLanguage,
+        });
+      if (!response.success) throw new Error("translation-failed");
+      applyTranslationStatus(response.status);
+      await pollTranslationStatus(tab.id!);
+    } catch {
+      setIsTranslating(false);
+      setStatus({ kind: "error", message: "Translation preview failed" });
+    }
+  }
+
+  async function handleTranslationVisibility(visible: boolean): Promise<void> {
+    setTranslationsVisible(visible);
+    await saveSettings({ sourceLanguage, targetLanguage, translationsVisible: visible });
+    try {
+      const tab = await getActiveTab();
+      await chrome.tabs.sendMessage(tab.id!, {
+        type: "SET_TRANSLATIONS_VISIBLE" as const,
+        visible,
+      });
+    } catch {
+      // The page has not been scanned yet.
+    }
+  }
+
+  async function handleClearTranslations(): Promise<void> {
+    try {
+      const tab = await getActiveTab();
+      await chrome.tabs.sendMessage(tab.id!, {
+        type: "CLEAR_TRANSLATIONS" as const,
+      });
+    } catch {
+      // Page may have navigated away.
+    }
+    setIsTranslating(false);
+    setHasTranslations(false);
+    setStatus({ kind: "success", message: "Translation preview cancelled" });
+  }
+
   // ── Clear Markers ────────────────────────────────────────────
   async function handleClear(): Promise<void> {
     try {
@@ -213,6 +313,8 @@ export default function App() {
         { type: "CLEAR_MARKERS" as const }
       );
       setHasMarkers(false);
+      setHasTranslations(false);
+      setIsTranslating(false);
       setStatus(INITIAL_STATUS);
     } catch {
       // Page may have navigated away.
@@ -256,12 +358,43 @@ export default function App() {
 
       <section className="popup-actions">
         <button
-          className="btn btn-primary"
+          className={`btn ${hasMarkers ? "btn-secondary" : "btn-primary"}`}
           disabled={isScanning}
           onClick={handleScan}
         >
           {isScanning ? "Scanning\u2026" : "Scan Manga Page"}
         </button>
+
+        {hasMarkers && (
+          <button
+            className="btn btn-primary"
+            disabled={isTranslating}
+            onClick={handlePreviewTranslation}
+          >
+            {isTranslating ? "Translating\u2026" : "Preview Translation"}
+          </button>
+        )}
+
+        {hasMarkers && (
+          <label className="translation-toggle">
+            <input
+              type="checkbox"
+              checked={translationsVisible}
+              onChange={(event) =>
+                handleTranslationVisibility(event.target.checked)}
+            />
+            <span>Show translations</span>
+          </label>
+        )}
+
+        {(hasTranslations || isTranslating) && (
+          <button
+            className="btn btn-secondary"
+            onClick={handleClearTranslations}
+          >
+            Clear Translations
+          </button>
+        )}
 
         {hasMarkers && (
           <button

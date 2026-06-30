@@ -28,6 +28,7 @@ export async function getSettings(): Promise<UserSettings> {
 
   const src = raw.sourceLanguage;
   const tgt = raw.targetLanguage;
+  const visible = raw.translationsVisible;
 
   return {
     sourceLanguage: typeof src === "string" && isValidSourceLanguage(src)
@@ -36,6 +37,9 @@ export async function getSettings(): Promise<UserSettings> {
     targetLanguage: typeof tgt === "string" && isValidTargetLanguage(tgt)
       ? tgt
       : DEFAULT_SETTINGS.targetLanguage,
+    translationsVisible: typeof visible === "boolean"
+      ? visible
+      : DEFAULT_SETTINGS.translationsVisible,
   };
 }
 
