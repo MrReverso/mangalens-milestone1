@@ -8,8 +8,9 @@ MangaLens is a browser extension for translating manga, manhwa, and webtoons dir
 - Lets the user select a source language and target language (persisted via `chrome.storage.local`)
 - Scans the active web page for large images that look like manga or webtoon pages when the user clicks **Scan Manga Page**
 - Places numbered visual markers (teal outlines + "Page N" badges) over detected images without modifying the original images
-- Markers follow images on scroll, realign on resize, and update if image sizes change
-- Detects lazy-loaded or infinite-scroll images after the initial scan via `MutationObserver`
+- Markers follow images during window or nested reader-container scrolling, realign on resize, and update if image sizes change
+- Detects lazy-loaded or infinite-scroll images after the initial scan, including delayed loads and `src`/`srcset` changes
+- Removes markers automatically when their source images leave the page
 - Provides a **Clear Page Markers** button to remove all extension UI from the page
 - Runs a minimal background service worker that initializes default settings on first install
 
@@ -55,7 +56,12 @@ The production build outputs to `.output/chrome-mv3/`.
 pnpm test
 ```
 
-Tests use Vitest with jsdom and cover the image detection logic (9 tests).
+Tests use Vitest with jsdom and cover image detection, fixed-overlay positioning,
+nested scrolling, clear/rescan behavior, lazy loading, duplicate prevention, and
+removed-image cleanup.
+
+GitHub Actions runs the install, compile, test, and production-build checks on
+every push and pull request.
 
 ## Loading the Unpacked Extension in Chrome
 
