@@ -13,6 +13,8 @@ capture one fully visible detected page. It does not perform real translation.
 - Returns only dimensions, PNG byte size, and capture method to the popup
 - Cooperatively cancels timed-out stages, retires late work, and bounds overlay
   restoration so retries cannot overlap old capture pipelines
+- Revalidates the requested active tab after preparation and after screenshot
+  completion so pixels from a switched tab are never cropped
 - Defines a validated, versioned contract for a future multipart backend
 - Provides a local, copyright-free capture fixture
 

@@ -180,7 +180,7 @@ export class CaptureCoordinator {
       throw new CaptureFailure("invalid-geometry");
     }
 
-    this.throwIfCancelled(operation);
+    await this.ensureTabRemainsActive(request, operation);
     let screenshot: string;
     try {
       screenshot = await this.dependencies.captureVisibleTab(request.windowId);
@@ -188,6 +188,7 @@ export class CaptureCoordinator {
       throw new CaptureFailure("screenshot-failed");
     }
     this.throwIfCancelled(operation);
+    await this.ensureTabRemainsActive(request, operation);
 
     this.throwIfCancelled(operation);
     const captured = await this.dependencies.cropper.crop(
@@ -204,6 +205,19 @@ export class CaptureCoordinator {
     if (operation.abortController.signal.aborted) {
       throw new CaptureFailure("timeout");
     }
+  }
+
+  private async ensureTabRemainsActive(
+    request: CaptureFirstVisiblePageMessage,
+    operation: CaptureOperation
+  ): Promise<void> {
+    this.throwIfCancelled(operation);
+    const isActive = await this.dependencies.isTabActive(
+      request.tabId,
+      request.windowId
+    );
+    this.throwIfCancelled(operation);
+    if (!isActive) throw new CaptureFailure("active-tab-changed");
   }
 
   private async attemptRestore(operation: CaptureOperation): Promise<void> {

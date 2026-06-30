@@ -36,6 +36,7 @@ export type CaptureErrorCode =
   | "no-detected-pages"
   | "no-fully-visible-page"
   | "capture-in-progress"
+  | "active-tab-changed"
   | "page-disconnected"
   | "page-moved"
   | "invalid-geometry"
@@ -67,6 +68,7 @@ const CAPTURE_ERROR_CODES = new Set<string>([
   "no-detected-pages",
   "no-fully-visible-page",
   "capture-in-progress",
+  "active-tab-changed",
   "page-disconnected",
   "page-moved",
   "invalid-geometry",

@@ -16,8 +16,8 @@ import type {
   TranslationStatusResponse,
   BackgroundCaptureResponse,
 } from "@/lib/messages";
-import type { CaptureErrorCode } from "@/types/capture";
 import { isBackgroundCaptureResponse } from "@/types/capture";
+import { captureErrorMessage } from "@/lib/capture/capture-status";
 import "./style.css";
 
 // ── Status States ──────────────────────────────────────────────
@@ -304,25 +304,6 @@ export default function App() {
     setIsTranslating(false);
     setHasTranslations(false);
     setStatus({ kind: "success", message: "Translation preview cancelled" });
-  }
-
-  function captureErrorMessage(code: CaptureErrorCode): string {
-    switch (code) {
-      case "no-detected-pages":
-        return "Scan the page first";
-      case "no-fully-visible-page":
-        return "Scroll until one complete manga page is visible";
-      case "capture-in-progress":
-        return "A capture is already running";
-      case "capture-too-large":
-        return "This page is too large to capture";
-      case "restricted-page":
-        return "MangaLens cannot capture this page";
-      case "timeout":
-        return "Image capture timed out";
-      default:
-        return "Image capture failed";
-    }
   }
 
   async function handleTestCapture(): Promise<void> {
