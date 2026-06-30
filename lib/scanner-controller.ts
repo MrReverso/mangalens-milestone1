@@ -11,6 +11,7 @@ import { MockTranslationProvider } from "@/lib/mock-translation-provider";
 import { OverlayManager } from "@/lib/overlay-manager";
 import { TranslationOverlayManager } from "@/lib/translation-overlay-manager";
 import { TranslationQueue } from "@/lib/translation-queue";
+import { normalizeTranslationText } from "@/lib/translation-text";
 import type {
   PageTranslation,
   TranslatePageResult,
@@ -48,11 +49,13 @@ export class MangaScannerController {
   private nextPageId = 1;
 
   constructor(
-    translationProvider: TranslationProvider = new MockTranslationProvider(),
-    translationOverlay = new TranslationOverlayManager()
+    translationProvider: TranslationProvider = new MockTranslationProvider()
   ) {
     this.translationProvider = translationProvider;
-    this.translationOverlay = translationOverlay;
+    this.translationOverlay = new TranslationOverlayManager({
+      onCommitEdit: (pageId, bubbleId, text) =>
+        this.commitBubbleEdit(pageId, bubbleId, text),
+    });
   }
 
   readonly messageHandler = (
@@ -134,6 +137,27 @@ export class MangaScannerController {
       pageNumber: this.currentPageNumber,
     });
     this.overlay.observeImage(img);
+  }
+
+  commitBubbleEdit(
+    pageId: string,
+    bubbleId: string,
+    translatedText: string
+  ): boolean {
+    const normalized = normalizeTranslationText(translatedText);
+    const page = this.pages.get(pageId);
+    if (!normalized || !page) return false;
+    const bubbleIndex = page.bubbles.findIndex(
+      (bubble) => bubble.id === bubbleId
+    );
+    if (bubbleIndex < 0) return false;
+    page.bubbles = page.bubbles.map((bubble, index) =>
+      index === bubbleIndex
+        ? { ...bubble, translatedText: normalized }
+        : bubble
+    );
+    this.translationOverlay.updateBubbleText(pageId, bubbleId, normalized);
+    return true;
   }
 
   private scanPage(sendResponse: SendResponse): void {

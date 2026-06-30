@@ -1,9 +1,19 @@
-# MangaLens — Milestone 2A: Local Mock Translation Overlays
+# MangaLens — Milestone 2B: Translation Bubble Editing
 
 MangaLens is a browser extension prototype for manga, manhwa, and webtoon
-translation experiences. Milestone 2A preserves manga-page detection and adds a
-fully local, deterministic mock translation preview. It does not perform real
-translation.
+translation experiences. Milestone 2B preserves manga-page detection and the
+local deterministic preview while adding safe, current-tab-session editing.
+It does not perform real translation.
+
+## What Milestone 2B Adds
+
+- Click any translated bubble to edit it in a focused textarea
+- Press **Enter** to save or **Shift+Enter** to insert a line break
+- Press **Escape** to cancel and restore the previous text
+- Blur the textarea or click outside the bubble to save
+- Reject empty and over-1,000-character edits without replacing the text
+- Preserve saved edits through scrolling, resizing, and translation visibility
+  changes for the current tab session
 
 ## What Milestone 2A Adds
 
@@ -28,6 +38,18 @@ detected from real speech bubbles.
    bubbles.
 6. Click **Clear Page Markers** to fully reset detection and translations.
 
+## Editing Translation Bubbles
+
+After the preview completes, click a translated bubble on the page. The editor
+stays inside that bubble and follows the image while the page scrolls or
+resizes. Only one bubble can be edited at a time. Clicking another bubble saves
+the current valid edit before opening the next one.
+
+Edits last only for the current tab session; refreshing or navigating away
+resets them. **Clear Translations** removes translated bubbles but preserves
+detected page markers. **Clear Page Markers** resets the complete scan and
+translation session.
+
 ## Preserved Milestone 1 Foundation
 
 - Opens a compact popup (360 px wide) with a dark navy UI and teal accent
@@ -45,7 +67,7 @@ detected from real speech bubbles.
 - **All translations and bubble positions are mocked locally.**
 - **No OCR, real translation, AI model calls, API requests, backend, or image
   processing is implemented.**
-- Translation bubbles are not editable in Milestone 2A.
+- Edits are session-only and are not persisted across refreshes or restarts.
 - Detection relies on image size heuristics (rendered and natural dimensions). Some non-manga images may be detected, and some manga images may be missed depending on the site's layout.
 - The content script is injected programmatically using `activeTab` + `scripting` permissions — it is only injected after the user interacts with the extension popup.
 - Only Chrome is tested in this milestone (Firefox and Edge support is planned for future milestones).
@@ -79,6 +101,12 @@ pnpm build
 
 The production build outputs to `.output/chrome-mv3/`.
 
+## Type Checking
+
+```bash
+pnpm compile
+```
+
 ## Running Tests
 
 ```bash
@@ -90,6 +118,8 @@ nested scrolling, clear/rescan behavior, lazy loading, duplicate prevention, and
 removed-image cleanup. Milestone 2A tests additionally cover deterministic mock
 translations, normalized coordinate validation, serial queue behavior,
 cancellation, visibility, translation positioning, and complete cleanup.
+Milestone 2B tests cover keyboard editing, validation, focus, outside clicks,
+safe rendering, session ownership, positioning, and teardown.
 
 GitHub Actions runs the install, compile, test, and production-build checks on
 every push and pull request.
@@ -140,6 +170,7 @@ mangalens/
 │   ├── scanner-controller.ts # Page sessions and scan/translation orchestration
 │   ├── translation-overlay-manager.ts # Mock speech-bubble rendering
 │   ├── translation-queue.ts # One-page-at-a-time processing
+│   ├── translation-text.ts  # Edit normalization and validation
 │   ├── messages.ts          # Typed message definitions
 │   └── storage.ts           # chrome.storage.local utility
 ├── types/
