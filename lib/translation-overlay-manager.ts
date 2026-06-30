@@ -1,12 +1,30 @@
 import { normalizedToViewportRect } from "@/lib/image-position";
+import { normalizeTranslationText } from "@/lib/translation-text";
 import type { TranslationBubble } from "@/types/translation";
 
 const ROOT_ID = "mangalens-translation-overlay-root";
 
 interface PageOverlay {
   readonly image: HTMLImageElement;
-  readonly bubbles: TranslationBubble[];
+  bubbles: TranslationBubble[];
   readonly elements: HTMLElement[];
+}
+
+export interface TranslationOverlayCallbacks {
+  readonly onCommitEdit: (
+    pageId: string,
+    bubbleId: string,
+    translatedText: string
+  ) => boolean;
+  readonly onCancelEdit?: (pageId: string, bubbleId: string) => void;
+}
+
+interface ActiveEditor {
+  readonly pageId: string;
+  readonly bubbleId: string;
+  readonly element: HTMLElement;
+  readonly textarea: HTMLTextAreaElement;
+  readonly previousText: string;
 }
 
 export class TranslationOverlayManager {
@@ -17,6 +35,13 @@ export class TranslationOverlayManager {
   private resizeObserver: ResizeObserver | null = null;
   private mutationObserver: MutationObserver | null = null;
   private animationFrame: number | null = null;
+  private activeEditor: ActiveEditor | null = null;
+  private readonly callbacks: TranslationOverlayCallbacks;
+  private readonly outsideClickHandler = (event: MouseEvent) => {
+    if (!this.activeEditor) return;
+    if (this.activeEditor.element.contains(event.target as Node)) return;
+    this.finishEditing(true);
+  };
   private readonly scheduleUpdate = () => {
     if (this.animationFrame !== null) return;
     this.animationFrame = requestAnimationFrame(() => {
@@ -24,6 +49,10 @@ export class TranslationOverlayManager {
       this.updateAllPositions();
     });
   };
+
+  constructor(callbacks?: TranslationOverlayCallbacks) {
+    this.callbacks = callbacks ?? { onCommitEdit: () => false };
+  }
 
   renderPage(
     pageId: string,
@@ -37,6 +66,14 @@ export class TranslationOverlayManager {
       element.className = "mangalens-translation-bubble";
       element.textContent = bubble.translatedText;
       element.title = bubble.originalText;
+      element.dataset.pageId = pageId;
+      element.dataset.bubbleId = bubble.id;
+      element.setAttribute("role", "button");
+      element.setAttribute("tabindex", "0");
+      element.setAttribute(
+        "aria-label",
+        `Edit translated manga text: ${bubble.originalText}`
+      );
       Object.assign(element.style, {
         position: "absolute",
         boxSizing: "border-box",
@@ -54,9 +91,22 @@ export class TranslationOverlayManager {
         fontWeight: "600",
         lineHeight: "1.2",
         textAlign: "center",
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
         overflow: "hidden",
-        pointerEvents: "none",
+        pointerEvents: "auto",
+        cursor: "text",
       } as CSSStyleDeclaration);
+      element.addEventListener("click", () => {
+        this.beginEditing(pageId, bubble.id, element);
+      });
+      element.addEventListener("keydown", (event) => {
+        if ((event.key === "Enter" || event.key === " ") &&
+            !this.activeEditor) {
+          event.preventDefault();
+          this.beginEditing(pageId, bubble.id, element);
+        }
+      });
       root.appendChild(element);
       return element;
     });
@@ -67,6 +117,7 @@ export class TranslationOverlayManager {
   }
 
   setVisible(visible: boolean): void {
+    if (!visible) this.finishEditing(true);
     this.visible = visible;
     if (this.root) this.root.style.display = visible ? "block" : "none";
   }
@@ -74,12 +125,15 @@ export class TranslationOverlayManager {
   removePage(pageId: string): void {
     const page = this.pages.get(pageId);
     if (!page) return;
+    if (this.activeEditor?.pageId === pageId) this.finishEditing(false);
     this.resizeObserver?.unobserve(page.image);
     for (const element of page.elements) element.remove();
     this.pages.delete(pageId);
+    this.cleanupWhenEmpty();
   }
 
   clear(): void {
+    this.finishEditing(false);
     for (const pageId of [...this.pages.keys()]) this.removePage(pageId);
     this.stopListening();
     this.root?.remove();
@@ -88,6 +142,30 @@ export class TranslationOverlayManager {
 
   get pageCount(): number {
     return this.pages.size;
+  }
+
+  get isEditing(): boolean {
+    return this.activeEditor !== null;
+  }
+
+  updateBubbleText(
+    pageId: string,
+    bubbleId: string,
+    translatedText: string
+  ): boolean {
+    const page = this.pages.get(pageId);
+    if (!page) return false;
+    const bubbleIndex = page.bubbles.findIndex(
+      (bubble) => bubble.id === bubbleId
+    );
+    if (bubbleIndex < 0) return false;
+    page.bubbles = page.bubbles.map((bubble, index) =>
+      index === bubbleIndex
+        ? { ...bubble, translatedText }
+        : bubble
+    );
+    page.elements[bubbleIndex].textContent = translatedText;
+    return true;
   }
 
   updateAllPositions(): void {
@@ -152,12 +230,14 @@ export class TranslationOverlayManager {
       childList: true,
       subtree: true,
     });
+    document.addEventListener("mousedown", this.outsideClickHandler, true);
   }
 
   private stopListening(): void {
     if (!this.listening) return;
     window.removeEventListener("scroll", this.scheduleUpdate, true);
     window.removeEventListener("resize", this.scheduleUpdate);
+    document.removeEventListener("mousedown", this.outsideClickHandler, true);
     this.resizeObserver?.disconnect();
     this.mutationObserver?.disconnect();
     this.resizeObserver = null;
@@ -165,5 +245,89 @@ export class TranslationOverlayManager {
     if (this.animationFrame !== null) cancelAnimationFrame(this.animationFrame);
     this.animationFrame = null;
     this.listening = false;
+  }
+
+  private cleanupWhenEmpty(): void {
+    if (this.pages.size > 0) return;
+    this.stopListening();
+    this.root?.remove();
+    this.root = null;
+  }
+
+  private beginEditing(
+    pageId: string,
+    bubbleId: string,
+    element: HTMLElement
+  ): void {
+    if (this.activeEditor?.element === element) return;
+    this.finishEditing(true);
+
+    const previousText = element.textContent ?? "";
+    const textarea = document.createElement("textarea");
+    textarea.value = previousText;
+    textarea.setAttribute("aria-label", "Edit translated manga text");
+    textarea.spellcheck = true;
+    Object.assign(textarea.style, {
+      width: "100%",
+      height: "100%",
+      boxSizing: "border-box",
+      resize: "none",
+      overflow: "auto",
+      border: "1px solid #5b8def",
+      borderRadius: "5px",
+      outline: "2px solid rgba(91, 141, 239, 0.35)",
+      background: "rgba(255, 255, 252, 0.98)",
+      color: "inherit",
+      font: "inherit",
+      lineHeight: "inherit",
+      textAlign: "center",
+      padding: "4px",
+      pointerEvents: "auto",
+    } as CSSStyleDeclaration);
+    element.textContent = "";
+    element.appendChild(textarea);
+    this.activeEditor = {
+      pageId,
+      bubbleId,
+      element,
+      textarea,
+      previousText,
+    };
+
+    textarea.addEventListener("keydown", (event) => {
+      event.stopPropagation();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        this.finishEditing(false);
+      } else if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        this.finishEditing(true);
+      }
+    });
+    textarea.addEventListener("blur", () => this.finishEditing(true));
+    textarea.focus();
+  }
+
+  private finishEditing(save: boolean): void {
+    const editor = this.activeEditor;
+    if (!editor) return;
+    this.activeEditor = null;
+
+    let displayText = editor.previousText;
+    if (save) {
+      const normalized = normalizeTranslationText(editor.textarea.value);
+      if (normalized &&
+          this.callbacks.onCommitEdit(
+            editor.pageId,
+            editor.bubbleId,
+            normalized
+          )) {
+        displayText = normalized;
+      }
+    } else {
+      this.callbacks.onCancelEdit?.(editor.pageId, editor.bubbleId);
+    }
+    editor.textarea.remove();
+    editor.element.textContent = displayText;
   }
 }

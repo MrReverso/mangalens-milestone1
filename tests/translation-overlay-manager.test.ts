@@ -4,11 +4,23 @@ import type { TranslationBubble } from "@/types/translation";
 
 let resizeCallback: ResizeObserverCallback;
 class ResizeObserverMock {
+  static instances: ResizeObserverMock[] = [];
   observe = vi.fn();
   unobserve = vi.fn();
   disconnect = vi.fn();
   constructor(callback: ResizeObserverCallback) {
     resizeCallback = callback;
+    ResizeObserverMock.instances.push(this);
+  }
+}
+
+class MutationObserverMock {
+  static instances: MutationObserverMock[] = [];
+  observe = vi.fn();
+  disconnect = vi.fn();
+  takeRecords = vi.fn((): MutationRecord[] => []);
+  constructor(_callback: MutationCallback) {
+    MutationObserverMock.instances.push(this);
   }
 }
 
@@ -24,7 +36,10 @@ describe("TranslationOverlayManager", () => {
 
   beforeEach(() => {
     frames = [];
+    ResizeObserverMock.instances = [];
+    MutationObserverMock.instances = [];
     vi.stubGlobal("ResizeObserver", ResizeObserverMock);
+    vi.stubGlobal("MutationObserver", MutationObserverMock);
     vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
       frames.push(callback);
       return frames.length;
@@ -166,6 +181,86 @@ describe("TranslationOverlayManager", () => {
     expect(document.querySelectorAll(".mangalens-translation-bubble"))
       .toHaveLength(1);
     expect(manager.pageCount).toBe(1);
+    manager.clear();
+  });
+
+  it("fully cleans up the final page and can render and edit again", () => {
+    const removeWindowListener = vi.spyOn(window, "removeEventListener");
+    const removeDocumentListener = vi.spyOn(document, "removeEventListener");
+    const cancelFrame = vi.mocked(cancelAnimationFrame);
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1000, 500)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", image, bubbles);
+    window.dispatchEvent(new Event("scroll"));
+    manager.removePage("page-1");
+
+    expect(document.getElementById("mangalens-translation-overlay-root"))
+      .toBeNull();
+    expect(removeWindowListener).toHaveBeenCalledWith(
+      "scroll",
+      expect.any(Function),
+      true
+    );
+    expect(removeWindowListener).toHaveBeenCalledWith(
+      "resize",
+      expect.any(Function)
+    );
+    expect(removeDocumentListener).toHaveBeenCalledWith(
+      "mousedown",
+      expect.any(Function),
+      true
+    );
+    expect(ResizeObserverMock.instances[0].disconnect).toHaveBeenCalledOnce();
+    expect(MutationObserverMock.instances[0].disconnect).toHaveBeenCalledOnce();
+    expect(cancelFrame).toHaveBeenCalled();
+
+    manager.renderPage("page-2", image, bubbles);
+    expect(document.querySelectorAll("#mangalens-translation-overlay-root"))
+      .toHaveLength(1);
+    document.querySelector<HTMLElement>(".mangalens-translation-bubble")!
+      .click();
+    expect(document.querySelector("textarea")).not.toBeNull();
+    manager.clear();
+  });
+
+  it("keeps resources until the second of two pages is removed", () => {
+    const removeWindowListener = vi.spyOn(window, "removeEventListener");
+    const firstImage = document.createElement("img");
+    const secondImage = document.createElement("img");
+    document.body.append(firstImage, secondImage);
+    vi.spyOn(firstImage, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1000, 500)
+    );
+    vi.spyOn(secondImage, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 600, 1000, 500)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", firstImage, bubbles);
+    manager.renderPage("page-2", secondImage, bubbles);
+
+    manager.removePage("page-1");
+    expect(manager.pageCount).toBe(1);
+    expect(document.getElementById("mangalens-translation-overlay-root"))
+      .not.toBeNull();
+    expect(removeWindowListener).not.toHaveBeenCalledWith(
+      "scroll",
+      expect.any(Function),
+      true
+    );
+    expect(ResizeObserverMock.instances[0].disconnect).not.toHaveBeenCalled();
+
+    manager.removePage("page-2");
+    expect(manager.pageCount).toBe(0);
+    expect(document.getElementById("mangalens-translation-overlay-root"))
+      .toBeNull();
+    expect(ResizeObserverMock.instances[0].disconnect).toHaveBeenCalledOnce();
+    expect(MutationObserverMock.instances[0].disconnect).toHaveBeenCalledOnce();
+    expect(removeWindowListener.mock.calls.filter(([type]) => type === "scroll"))
+      .toHaveLength(1);
     manager.clear();
   });
 });

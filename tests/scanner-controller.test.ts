@@ -335,4 +335,122 @@ describe("MangaScannerController", () => {
       .toHaveLength(1);
     controller.destroy();
   });
+
+  it("owns saved bubble edits across hide and show", async () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    const controller = new MangaScannerController(new ImmediateProvider());
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const bubble = document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    )!;
+    bubble.click();
+    const editor = bubble.querySelector<HTMLTextAreaElement>("textarea")!;
+    editor.value = "Session-owned edit";
+    editor.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "Enter",
+      bubbles: true,
+    }));
+    send(controller, { type: "SET_TRANSLATIONS_VISIBLE", visible: false });
+    send(controller, { type: "SET_TRANSLATIONS_VISIBLE", visible: true });
+    expect(bubble.textContent).toBe("Session-owned edit");
+    expect(document.querySelectorAll(".mangalens-translation-bubble"))
+      .toHaveLength(1);
+    controller.destroy();
+  });
+
+  it("commitBubbleEdit validates identifiers and updates rendered text", async () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    const controller = new MangaScannerController(new ImmediateProvider());
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    const bubble = document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    )!;
+    expect(controller.commitBubbleEdit(
+      bubble.dataset.pageId!,
+      bubble.dataset.bubbleId!,
+      "  Direct commit  "
+    )).toBe(true);
+    expect(bubble.textContent).toBe("Direct commit");
+    expect(controller.commitBubbleEdit(
+      "missing-page",
+      bubble.dataset.bubbleId!,
+      "No"
+    )).toBe(false);
+    expect(controller.commitBubbleEdit(
+      bubble.dataset.pageId!,
+      "missing-bubble",
+      "No"
+    )).toBe(false);
+    expect(controller.commitBubbleEdit(
+      bubble.dataset.pageId!,
+      bubble.dataset.bubbleId!,
+      "   "
+    )).toBe(false);
+    controller.destroy();
+  });
+
+  it("clear translations closes editing while preserving page markers", async () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    const controller = new MangaScannerController(new ImmediateProvider());
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+    document.querySelector<HTMLElement>(".mangalens-translation-bubble")!
+      .click();
+    send(controller, { type: "CLEAR_TRANSLATIONS" });
+    expect(document.querySelector("textarea")).toBeNull();
+    expect(document.querySelectorAll(".mangalens-translation-bubble"))
+      .toHaveLength(0);
+    expect(document.querySelectorAll(".mangalens-marker")).toHaveLength(1);
+    controller.destroy();
+  });
+
+  it("full clear closes editing and permits preview editing after rescan", async () => {
+    const image = createMangaImage();
+    document.body.appendChild(image);
+    const controller = new MangaScannerController(new ImmediateProvider());
+    const preview = {
+      type: "START_MOCK_TRANSLATION",
+      sourceLanguage: "auto",
+      targetLanguage: "en",
+    } as const;
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, preview);
+    await Promise.resolve();
+    await Promise.resolve();
+    document.querySelector<HTMLElement>(".mangalens-translation-bubble")!
+      .click();
+    send(controller, { type: "CLEAR_MARKERS" });
+    expect(document.querySelector("textarea")).toBeNull();
+    send(controller, { type: "SCAN_PAGE" });
+    send(controller, preview);
+    await Promise.resolve();
+    await Promise.resolve();
+    document.querySelector<HTMLElement>(".mangalens-translation-bubble")!
+      .click();
+    expect(document.querySelector("textarea")).not.toBeNull();
+    controller.destroy();
+  });
 });
