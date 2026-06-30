@@ -22,6 +22,7 @@ describe("translation pipeline boundaries", () => {
       windowId: 2,
       sourceLanguage: "auto",
       targetLanguage: "it",
+      serviceMode: "local-demo",
     };
     expect(isTranslateVisiblePageMessage(request)).toBe(true);
     expect(isTranslateVisiblePageMessage({ ...request, targetLanguage: "xx" }))
@@ -65,14 +66,16 @@ describe("translation pipeline boundaries", () => {
       pageId: "page-1",
       pageNumber: 1,
       bubbleCount: 3,
-      localDemo: true,
+      demo: true,
+      serviceMode: "local-demo",
     })).toBe(true);
     expect(isBackgroundTranslationResponse({
       success: true,
       pageId: "page-1",
       pageNumber: 1,
       bubbleCount: 3,
-      localDemo: true,
+      demo: true,
+      serviceMode: "local-demo",
       blob: new Blob(),
     })).toBe(false);
   });

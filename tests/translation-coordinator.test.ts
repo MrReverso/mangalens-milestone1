@@ -7,6 +7,7 @@ import {
 import { CaptureFailure } from "@/lib/capture/capture-errors";
 import type { CapturedImage } from "@/types/capture";
 import type { TranslationApiRequestMetadata } from "@/types/translation-api";
+import { isBackgroundTranslationResponse } from "@/types/translation-pipeline";
 
 const captured: CapturedImage = {
   blob: new Blob(["pixels"], { type: "image/png" }),
@@ -27,6 +28,7 @@ const request = {
   windowId: 3,
   sourceLanguage: "auto" as const,
   targetLanguage: "en" as const,
+  serviceMode: "local-demo" as const,
 };
 const bubbles = [{
   id: "bubble-1",
@@ -39,15 +41,19 @@ function dependencies(
   overrides: Partial<TranslationCoordinatorDependencies> = {}
 ): TranslationCoordinatorDependencies {
   const sequences = new Map<number, number>();
+  const defaultService = {
+    translate: vi.fn(async (input) => ({
+      contractVersion: 1,
+      requestId: input.metadata.requestId,
+      pageId: input.metadata.pageId,
+      bubbles,
+    })),
+  };
   return {
     captureImage: vi.fn(async () => captured),
-    service: {
-      translate: vi.fn(async (input) => ({
-        contractVersion: 1,
-        requestId: input.metadata.requestId,
-        pageId: input.metadata.pageId,
-        bubbles,
-      })),
+    services: {
+      "local-demo": defaultService,
+      "development-api": defaultService,
     },
     sendToTab: vi.fn(async () => ({
       success: true,
@@ -78,7 +84,8 @@ describe("TranslationCoordinator", () => {
       pageId: "page-2",
       pageNumber: 2,
       bubbleCount: 1,
-      localDemo: true,
+      demo: true,
+      serviceMode: "local-demo",
     });
     expect(deps.captureImage).toHaveBeenCalledTimes(1);
     expect(deps.sendToTab).toHaveBeenCalledWith(7, expect.objectContaining({
@@ -91,17 +98,21 @@ describe("TranslationCoordinator", () => {
 
   it("builds matching validated request metadata", async () => {
     let seen: TranslationApiRequestMetadata | null = null;
+    const mockService = {
+      translate: vi.fn(async (input) => {
+        seen = input.metadata;
+        return {
+          contractVersion: 1,
+          requestId: input.metadata.requestId,
+          pageId: input.metadata.pageId,
+          bubbles,
+        };
+      }),
+    };
     const deps = dependencies({
-      service: {
-        translate: vi.fn(async (input) => {
-          seen = input.metadata;
-          return {
-            contractVersion: 1,
-            requestId: input.metadata.requestId,
-            pageId: input.metadata.pageId,
-            bubbles,
-          };
-        }),
+      services: {
+        "local-demo": mockService,
+        "development-api": mockService,
       },
     });
     await new TranslationCoordinator(deps).translate(request);
@@ -115,14 +126,18 @@ describe("TranslationCoordinator", () => {
 
   it("rejects mismatched request and page IDs", async () => {
     for (const mismatch of ["request", "page"] as const) {
+      const mockService = {
+        translate: vi.fn(async () => ({
+          contractVersion: 1,
+          requestId: mismatch === "request" ? "wrong" : "request-1",
+          pageId: mismatch === "page" ? "wrong" : "page-2",
+          bubbles,
+        })),
+      };
       const deps = dependencies({
-        service: {
-          translate: vi.fn(async () => ({
-            contractVersion: 1,
-            requestId: mismatch === "request" ? "wrong" : "request-1",
-            pageId: mismatch === "page" ? "wrong" : "page-2",
-            bubbles,
-          })),
+        services: {
+          "local-demo": mockService,
+          "development-api": mockService,
         },
       });
       expect(await new TranslationCoordinator(deps).translate(request)).toEqual({
@@ -134,13 +149,19 @@ describe("TranslationCoordinator", () => {
   });
 
   it("rejects invalid service output", async () => {
-    const deps = dependencies({
-      service: { translate: vi.fn(async () => ({
+    const mockService = {
+      translate: vi.fn(async () => ({
         contractVersion: 1,
         requestId: "request-1",
         pageId: "page-2",
         bubbles: [bubbles[0], bubbles[0]],
-      })) },
+      })),
+    };
+    const deps = dependencies({
+      services: {
+        "local-demo": mockService,
+        "development-api": mockService,
+      },
     });
     expect(await new TranslationCoordinator(deps).translate(request)).toEqual({
       success: false,
@@ -151,7 +172,7 @@ describe("TranslationCoordinator", () => {
   it("releases its lock after capture, service, apply failure and success", async () => {
     const failures: Partial<TranslationCoordinatorDependencies>[] = [
       { captureImage: vi.fn(async () => { throw new CaptureFailure("crop-failed"); }) },
-      { service: { translate: vi.fn(async () => { throw new Error("private"); }) } },
+      { services: { "local-demo": { translate: vi.fn(async () => { throw new Error("private"); }) }, "development-api": { translate: vi.fn(async () => { throw new Error("private"); }) } } },
       { sendToTab: vi.fn(async () => ({ success: false, error: { code: "apply-failed" } })) },
     ];
     for (const failure of failures) {
@@ -200,12 +221,16 @@ describe("TranslationCoordinator", () => {
   it("times out once, aborts service, and never applies a late result", async () => {
     vi.useFakeTimers();
     const observed: { signal?: AbortSignal } = {};
+    const testService = {
+      translate: vi.fn((_input, operationSignal) => {
+        observed.signal = operationSignal;
+        return new Promise(() => undefined);
+      }),
+    };
     const deps = dependencies({
-      service: {
-        translate: vi.fn((_input, operationSignal) => {
-          observed.signal = operationSignal;
-          return new Promise(() => undefined);
-        }),
+      services: {
+        "local-demo": testService,
+        "development-api": testService,
       },
       timeoutMs: 20,
     });
@@ -268,7 +293,7 @@ describe("TranslationCoordinator", () => {
     const sendResponse = vi.fn();
     
     const result1 = handler(
-      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: 2, sourceLanguage: "invalid", targetLanguage: "en" },
+      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: 2, sourceLanguage: "invalid", targetLanguage: "en", serviceMode: "local-demo" },
       {} as chrome.runtime.MessageSender,
       sendResponse
     );
@@ -281,7 +306,7 @@ describe("TranslationCoordinator", () => {
     sendResponse.mockClear();
 
     const result2 = handler(
-      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: 2, sourceLanguage: "auto", targetLanguage: "invalid" },
+      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: 2, sourceLanguage: "auto", targetLanguage: "invalid", serviceMode: "local-demo" },
       {} as chrome.runtime.MessageSender,
       sendResponse
     );
@@ -299,7 +324,7 @@ describe("TranslationCoordinator", () => {
     const sendResponse = vi.fn();
 
     const result1 = handler(
-      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 0, windowId: 2, sourceLanguage: "auto", targetLanguage: "en" },
+      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 0, windowId: 2, sourceLanguage: "auto", targetLanguage: "en", serviceMode: "local-demo" },
       {} as chrome.runtime.MessageSender,
       sendResponse
     );
@@ -312,7 +337,7 @@ describe("TranslationCoordinator", () => {
     sendResponse.mockClear();
 
     const result2 = handler(
-      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: -1, sourceLanguage: "auto", targetLanguage: "en" },
+      { type: "TRANSLATE_VISIBLE_PAGE_LOCAL", tabId: 1, windowId: -1, sourceLanguage: "auto", targetLanguage: "en", serviceMode: "local-demo" },
       {} as chrome.runtime.MessageSender,
       sendResponse
     );
@@ -518,5 +543,154 @@ describe("TranslationCoordinator", () => {
     });
 
     expect(coordinator.isActive(request.tabId)).toBe(false);
+  });
+
+  it("selects only local service when mode is local-demo and HTTP service when mode is development-api", async () => {
+    const localSpy = vi.fn(async () => ({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles }));
+    const httpSpy = vi.fn(async () => ({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles }));
+    const deps = dependencies({
+      services: {
+        "local-demo": { translate: localSpy },
+        "development-api": { translate: httpSpy },
+      },
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    await coordinator.translate({ ...request, serviceMode: "local-demo" });
+    expect(localSpy).toHaveBeenCalledTimes(1);
+    expect(httpSpy).not.toHaveBeenCalled();
+
+    localSpy.mockClear();
+    httpSpy.mockClear();
+
+    await coordinator.translate({ ...request, serviceMode: "development-api" });
+    expect(httpSpy).toHaveBeenCalledTimes(1);
+    expect(localSpy).not.toHaveBeenCalled();
+  });
+
+  it("shares the same per-tab lock between local and dev API modes", async () => {
+    let resolveLocal!: (val: any) => void;
+    const localPromise = new Promise((resolve) => { resolveLocal = resolve; });
+    const localSpy = vi.fn(() => localPromise);
+    const deps = dependencies({
+      services: {
+        "local-demo": { translate: localSpy },
+        "development-api": { translate: vi.fn() },
+      },
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    const promise1 = coordinator.translate({ ...request, serviceMode: "local-demo" });
+    const promise2 = coordinator.translate({ ...request, serviceMode: "development-api" });
+
+    expect(await promise2).toEqual({
+      success: false,
+      error: { code: "translation-in-progress" },
+    });
+
+    resolveLocal({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles });
+    await promise1;
+  });
+
+  it("rejects unknown modes before allocating locks or starting capture", async () => {
+    const deps = dependencies();
+    const coordinator = new TranslationCoordinator(deps);
+
+    const badRequest = { ...request, serviceMode: "unknown-mode" as any };
+    const response = await coordinator.translate(badRequest);
+    expect(response).toEqual({
+      success: false,
+      error: { code: "invalid-service-mode" },
+    });
+    expect(deps.captureImage).not.toHaveBeenCalled();
+    expect(coordinator.isActive(request.tabId)).toBe(false);
+  });
+
+  it("maps invalid service responses, request ID mismatches, and page ID mismatches to backend-invalid-response for dev mode and preserves invalid-translation-response for local mode", async () => {
+    const invalidResponses = [
+      { contractVersion: 2, requestId: "request-1", pageId: "page-2", bubbles },
+      { contractVersion: 1, requestId: "wrong-id", pageId: "page-2", bubbles },
+      { contractVersion: 1, requestId: "request-1", pageId: "wrong-page", bubbles },
+    ];
+
+    for (const badResp of invalidResponses) {
+      const deps = dependencies({
+        services: {
+          "local-demo": { translate: vi.fn() },
+          "development-api": { translate: vi.fn(async () => badResp) },
+        },
+      });
+      const coordinator = new TranslationCoordinator(deps);
+      const res = await coordinator.translate({ ...request, serviceMode: "development-api" });
+      expect(res).toEqual({
+        success: false,
+        error: { code: "backend-invalid-response" },
+      });
+    }
+
+    const depsLocal = dependencies({
+      services: {
+        "local-demo": { translate: vi.fn(async () => invalidResponses[0]) },
+        "development-api": { translate: vi.fn() },
+      },
+    });
+    const coordinatorLocal = new TranslationCoordinator(depsLocal);
+    const resLocal = await coordinatorLocal.translate({ ...request, serviceMode: "local-demo" });
+    expect(resLocal).toEqual({
+      success: false,
+      error: { code: "invalid-translation-response" },
+    });
+  });
+
+  it("ensures popup-safe success response contains no image bytes, secrets or endpoints", () => {
+    const response = {
+      success: true,
+      pageId: "page-2",
+      pageNumber: 2,
+      bubbleCount: 1,
+      demo: true,
+      serviceMode: "development-api",
+    } as const;
+    
+    expect(isBackgroundTranslationResponse(response)).toBe(true);
+    
+    const keys = Object.keys(response);
+    expect(keys).not.toContain("blob");
+    expect(keys).not.toContain("image");
+    expect(keys).not.toContain("endpoint");
+    expect(keys).not.toContain("apiKey");
+  });
+
+  it("returns timeout for local-demo and backend-timeout for development-api upon total deadline expiry", async () => {
+    vi.useFakeTimers();
+    let resolveService!: (value: any) => void;
+    const servicePromise = new Promise((resolve) => {
+      resolveService = resolve;
+    });
+
+    const deps = dependencies({
+      services: {
+        "local-demo": { translate: vi.fn(() => servicePromise) },
+        "development-api": { translate: vi.fn(() => servicePromise) },
+      },
+      timeoutMs: 100,
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    const promiseLocal = coordinator.translate({ ...request, serviceMode: "local-demo" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await promiseLocal).toEqual({
+      success: false,
+      error: { code: "timeout" },
+    });
+
+    const promiseDev = coordinator.translate({ ...request, tabId: 8, serviceMode: "development-api" });
+    await vi.advanceTimersByTimeAsync(100);
+    expect(await promiseDev).toEqual({
+      success: false,
+      error: { code: "backend-timeout" },
+    });
+
+    resolveService({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles });
   });
 });

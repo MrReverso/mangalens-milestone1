@@ -22,7 +22,7 @@ import {
   isBackgroundTranslationResponse,
   isTranslationPipelineProgressMessage,
 } from "@/types/translation-pipeline";
-import type { TranslationPipelineStage } from "@/types/translation-pipeline";
+import type { TranslationPipelineStage, TranslationServiceMode } from "@/types/translation-pipeline";
 import { translationPipelineErrorMessage } from "@/lib/translation/translation-pipeline-status";
 import "./style.css";
 
@@ -105,6 +105,8 @@ export default function App() {
   const [isLocalTranslating, setIsLocalTranslating] = useState(false);
   const [localStage, setLocalStage] =
     useState<TranslationPipelineStage>("capturing");
+  const [currentServiceMode, setCurrentServiceMode] =
+    useState<TranslationServiceMode>("local-demo");
   const localTranslationTabId = useRef<number | null>(null);
 
   // ── Load persisted settings on mount ─────────────────────────
@@ -374,8 +376,9 @@ export default function App() {
     }
   }
 
-  async function handleLocalTranslation(): Promise<void> {
+  async function handleLocalTranslation(mode: TranslationServiceMode): Promise<void> {
     setIsLocalTranslating(true);
+    setCurrentServiceMode(mode);
     setLocalStage("capturing");
     setStatus({ kind: "scanning", message: "Capturing Page\u2026" });
     try {
@@ -389,6 +392,7 @@ export default function App() {
         windowId: tab.windowId,
         sourceLanguage,
         targetLanguage,
+        serviceMode: mode,
       });
       if (!isBackgroundTranslationResponse(rawResponse)) {
         throw new Error("invalid-translation-response");
@@ -401,10 +405,11 @@ export default function App() {
         return;
       }
       setHasTranslations(true);
+      const modeText = rawResponse.serviceMode === "local-demo" ? "Local demo" : "Dev API demo";
       setStatus({
         kind: "success",
         message: `Translated Page ${rawResponse.pageNumber} \u00b7 ` +
-          `${rawResponse.bubbleCount} bubbles \u00b7 Local demo`,
+          `${rawResponse.bubbleCount} bubbles \u00b7 ${modeText}`,
       });
     } catch {
       setStatus({ kind: "error", message: "Translation failed" });
@@ -494,15 +499,33 @@ export default function App() {
             disabled={
               isScanning || isTranslating || isCapturing || isLocalTranslating
             }
-            onClick={handleLocalTranslation}
+            onClick={() => handleLocalTranslation("local-demo")}
           >
-            {isLocalTranslating
+            {isLocalTranslating && currentServiceMode === "local-demo"
               ? localStage === "capturing"
                 ? "Capturing\u2026"
                 : localStage === "processing"
                   ? "Processing\u2026"
                   : "Applying\u2026"
               : "Translate Visible Page"}
+          </button>
+        )}
+
+        {hasMarkers && (
+          <button
+            className="btn btn-primary"
+            disabled={
+              isScanning || isTranslating || isCapturing || isLocalTranslating
+            }
+            onClick={() => handleLocalTranslation("development-api")}
+          >
+            {isLocalTranslating && currentServiceMode === "development-api"
+              ? localStage === "capturing"
+                ? "Capturing\u2026"
+                : localStage === "processing"
+                  ? "Processing\u2026"
+                  : "Applying\u2026"
+              : "Translate via Dev API"}
           </button>
         )}
 
