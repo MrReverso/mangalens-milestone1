@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { LocalDeterministicTranslationService } from "@/lib/translation/local-deterministic-translation-service";
 import type { TranslationApiRequestMetadata } from "@/types/translation-api";
 
@@ -25,7 +25,29 @@ TranslationApiRequestMetadata {
 }
 
 describe("LocalDeterministicTranslationService", () => {
-  afterEach(() => vi.useRealTimers());
+  const originalTextDetector = (globalThis as any).TextDetector;
+  const originalCreateImageBitmap = globalThis.createImageBitmap;
+
+  beforeEach(() => {
+    (globalThis as any).TextDetector = class MockTextDetector {
+      async detect() {
+        return [
+          { boundingBox: { x: 80, y: 80, width: 340, height: 130 }, rawValue: "Detected Text 1" },
+          { boundingBox: { x: 580, y: 240, width: 320, height: 120 }, rawValue: "Detected Text 2" },
+          { boundingBox: { x: 310, y: 730, width: 380, height: 130 }, rawValue: "Detected Text 3" },
+        ];
+      }
+    };
+    globalThis.createImageBitmap = async () => {
+      return { width: 1000, height: 1000 } as any;
+    };
+  });
+
+  afterEach(() => {
+    (globalThis as any).TextDetector = originalTextDetector;
+    globalThis.createImageBitmap = originalCreateImageBitmap;
+    vi.useRealTimers();
+  });
 
   it("accepts a valid PNG and returns contract-matching bubbles", async () => {
     const response = await new LocalDeterministicTranslationService(0).translate({
@@ -63,20 +85,15 @@ describe("LocalDeterministicTranslationService", () => {
     expect(second).toEqual(first);
   });
 
-  it("changes demo text predictably by target language", async () => {
+  it("does not translate text and returns detected text for both fields", async () => {
     const service = new LocalDeterministicTranslationService(0);
     const image = new Blob(["pixels"], { type: "image/png" });
-    const english = await service.translate(
+    const response = await service.translate(
       { image, metadata: metadata("en") },
       new AbortController().signal
-    ) as { bubbles: Array<{ translatedText: string }> };
-    const italian = await service.translate(
-      { image, metadata: metadata("it") },
-      new AbortController().signal
-    ) as { bubbles: Array<{ translatedText: string }> };
-    expect(english.bubbles[0].translatedText).toBe("We finally made it.");
-    expect(italian.bubbles[0].translatedText)
-      .toBe("Ce l’abbiamo finalmente fatta.");
+    ) as { bubbles: Array<{ originalText: string; translatedText: string }> };
+    expect(response.bubbles[0].originalText).toBe("Detected Text 1");
+    expect(response.bubbles[0].translatedText).toBe("Detected Text 1");
   });
 
   it("rejects an already-aborted signal", async () => {
@@ -105,5 +122,34 @@ describe("LocalDeterministicTranslationService", () => {
       .toString();
     expect(source).not.toMatch(/\bfetch\s*\(/);
     expect(source).not.toMatch(/XMLHttpRequest|WebSocket|EventSource/);
+  });
+
+  it("groups nearby lines belonging to one dialogue block and normalizes coordinate bounds", async () => {
+    (globalThis as any).TextDetector = class MockTextDetector {
+      async detect() {
+        return [
+          { boundingBox: { x: 100, y: 100, width: 200, height: 50 }, rawValue: "Hello" },
+          { boundingBox: { x: 110, y: 160, width: 180, height: 40 }, rawValue: "World" },
+          { boundingBox: { x: 500, y: 500, width: 100, height: 50 }, rawValue: "Separate" },
+        ];
+      }
+    };
+
+    const response = await new LocalDeterministicTranslationService(0).translate({
+      image: new Blob(["pixels"], { type: "image/png" }),
+      metadata: metadata(),
+    }, new AbortController().signal) as { bubbles: any[] };
+
+    expect(response.bubbles).toHaveLength(2);
+    
+    const merged = response.bubbles.find((b) => b.originalText.includes("Hello"));
+    expect(merged.originalText).toBe("Hello\nWorld");
+    expect(merged.translatedText).toBe("Hello\nWorld");
+    expect(merged.bounds).toEqual({
+      x: 0.1,
+      y: 0.1,
+      width: 0.2,
+      height: 0.1,
+    });
   });
 });

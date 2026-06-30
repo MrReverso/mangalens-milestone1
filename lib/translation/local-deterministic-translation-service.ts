@@ -1,4 +1,3 @@
-import type { TargetLanguage } from "@/types/extension";
 import type { TranslationBubble } from "@/types/translation";
 import {
   validateTranslationApiRequestMetadata,
@@ -8,20 +7,94 @@ import type {
   TranslationService,
 } from "@/lib/translation/translation-service";
 
-const DEMO_TEXT: Record<TargetLanguage, readonly [string, string, string]> = {
-  en: ["We finally made it.", "Stay alert.", "This is only the beginning."],
-  es: ["Por fin llegamos.", "Mantente alerta.", "Esto es solo el comienzo."],
-  pt: ["Finalmente chegamos.", "Fique alerta.", "Isto é apenas o começo."],
-  fr: ["Nous y sommes enfin.", "Reste sur tes gardes.", "Ce n’est que le début."],
-  it: ["Ce l’abbiamo finalmente fatta.", "Resta in guardia.", "Questo è solo l’inizio."],
-  de: ["Wir haben es endlich geschafft.", "Bleib wachsam.", "Das ist erst der Anfang."],
-};
+interface TempRegion {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  text: string;
+}
 
-const BOUNDS = [
-  { x: 0.08, y: 0.08, width: 0.34, height: 0.13 },
-  { x: 0.58, y: 0.24, width: 0.32, height: 0.12 },
-  { x: 0.31, y: 0.73, width: 0.38, height: 0.13 },
-] as const;
+function groupTextRegions(
+  regions: TempRegion[],
+  pixelWidth: number,
+  pixelHeight: number
+): TempRegion[] {
+  if (regions.length === 0) return [];
+
+  let current = [...regions];
+  let merged = true;
+
+  const maxGapX = pixelWidth * 0.08;
+  const maxGapY = pixelHeight * 0.08;
+
+  while (merged) {
+    merged = false;
+    const next: TempRegion[] = [];
+    const visited = new Set<number>();
+
+    for (let i = 0; i < current.length; i++) {
+      if (visited.has(i)) continue;
+      let group = [current[i]];
+      visited.add(i);
+
+      for (let j = i + 1; j < current.length; j++) {
+        if (visited.has(j)) continue;
+
+        const close = group.some((member) => {
+          const memberRight = member.x + member.width;
+          const memberBottom = member.y + member.height;
+          const candidateRight = current[j].x + current[j].width;
+          const candidateBottom = current[j].y + current[j].height;
+
+          const overlapX = Math.max(
+            0,
+            Math.min(memberRight, candidateRight) - Math.max(member.x, current[j].x)
+          );
+          const overlapY = Math.max(
+            0,
+            Math.min(memberBottom, candidateBottom) - Math.max(member.y, current[j].y)
+          );
+
+          const gapX = overlapX > 0 ? 0 : Math.max(member.x, current[j].x) - Math.min(memberRight, candidateRight);
+          const gapY = overlapY > 0 ? 0 : Math.max(member.y, current[j].y) - Math.min(memberBottom, candidateBottom);
+
+          return gapX <= maxGapX && gapY <= maxGapY;
+        });
+
+        if (close) {
+          group.push(current[j]);
+          visited.add(j);
+          merged = true;
+        }
+      }
+
+      const minX = Math.min(...group.map((r) => r.x));
+      const minY = Math.min(...group.map((r) => r.y));
+      const maxX = Math.max(...group.map((r) => r.x + r.width));
+      const maxY = Math.max(...group.map((r) => r.y + r.height));
+
+      const sortedGroup = [...group].sort((a, b) => {
+        if (Math.abs(a.y - b.y) > 10) {
+          return a.y - b.y;
+        }
+        return a.x - b.x;
+      });
+      const text = sortedGroup.map((r) => r.text).join("\n");
+
+      next.push({
+        x: minX,
+        y: minY,
+        width: maxX - minX,
+        height: maxY - minY,
+        text,
+      });
+    }
+    current = next;
+  }
+
+  return current;
+}
 
 export class LocalDeterministicTranslationService
 implements TranslationService {
@@ -40,13 +113,59 @@ implements TranslationService {
     await abortableDelay(this.delayMs, signal);
     throwIfAborted(signal);
 
-    const text = DEMO_TEXT[metadata.targetLanguage];
-    const bubbles: TranslationBubble[] = text.map((translatedText, index) => ({
-      id: `${metadata.pageId}-local-${index + 1}`,
-      bounds: BOUNDS[index],
-      originalText: `Local demo source ${index + 1}`,
-      translatedText,
+    if (typeof (globalThis as any).TextDetector === "undefined") {
+      throw new Error("ocr-unavailable");
+    }
+
+    let imageBitmap: ImageBitmap;
+    try {
+      imageBitmap = await createImageBitmap(input.image);
+    } catch {
+      throw new Error("invalid-image");
+    }
+
+    let detected: any[];
+    try {
+      const detector = new (globalThis as any).TextDetector();
+      detected = await detector.detect(imageBitmap);
+    } catch {
+      throw new Error("ocr-unavailable");
+    }
+
+    if (detected.length === 0) {
+      throw new Error("ocr-no-text");
+    }
+
+    const tempRegions: TempRegion[] = detected.map((d: any) => ({
+      x: d.boundingBox.x,
+      y: d.boundingBox.y,
+      width: d.boundingBox.width,
+      height: d.boundingBox.height,
+      text: d.rawValue,
     }));
+
+    const grouped = groupTextRegions(
+      tempRegions,
+      imageBitmap.width,
+      imageBitmap.height
+    );
+
+    if (grouped.length === 0) {
+      throw new Error("ocr-no-text");
+    }
+
+    const bubbles: TranslationBubble[] = grouped.map((g, index) => ({
+      id: `${metadata.pageId}-local-${index + 1}`,
+      bounds: {
+        x: g.x / imageBitmap.width,
+        y: g.y / imageBitmap.height,
+        width: g.width / imageBitmap.width,
+        height: g.height / imageBitmap.height,
+      },
+      originalText: g.text,
+      translatedText: g.text,
+    }));
+
     return {
       contractVersion: 1,
       requestId: metadata.requestId,
