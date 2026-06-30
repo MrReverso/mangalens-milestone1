@@ -14,6 +14,8 @@ export function translationPipelineErrorMessage(
       return "A translation is already running";
     case "invalid-language":
       return "Choose valid source and target languages";
+    case "invalid-service-mode":
+      return "Choose a valid translation service mode";
     case "translation-service-failed":
       return "Local translation processing failed";
     case "target-page-missing":

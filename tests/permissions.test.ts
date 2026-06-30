@@ -26,4 +26,16 @@ describe("Extension Permissions", () => {
 
     expect(hostPermissions).toEqual(["http://127.0.0.1:8787/*"]);
   });
+
+  it("verifies package.json contains dev:backend script pointing to server.ts without remote binding", () => {
+    const pkgPath = path.resolve(__dirname, "../package.json");
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, "utf8"));
+    
+    expect(pkg.scripts).toBeDefined();
+    expect(pkg.scripts["dev:backend"]).toBeDefined();
+    expect(pkg.scripts["dev:backend"]).toContain("dev/backend/server.ts");
+    
+    const scriptCmd = pkg.scripts["dev:backend"];
+    expect(scriptCmd).not.toMatch(/(https?:|\b[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\b)/);
+  });
 });

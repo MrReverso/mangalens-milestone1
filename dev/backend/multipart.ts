@@ -9,62 +9,91 @@ export interface MultipartPart {
 
 export function parseMultipart(body: Buffer, boundary: string): MultipartPart[] {
   const parts: MultipartPart[] = [];
-  const boundaryBuffer = Buffer.from(`--${boundary}`);
+  const boundaryStr = `--${boundary}`;
+  const startBoundary = Buffer.from(`${boundaryStr}\r\n`);
+  const delimiter = Buffer.from(`\r\n${boundaryStr}`);
   
-  let index = 0;
+  if (body.length < startBoundary.length || !body.subarray(0, startBoundary.length).equals(startBoundary)) {
+    return [];
+  }
+  
+  let partStart = startBoundary.length;
+  
   while (true) {
-    const boundaryIndex = body.indexOf(boundaryBuffer, index);
-    if (boundaryIndex === -1) break;
+    let searchStart = partStart;
+    let delimMatchIndex = -1;
+    let nextOffset = -1;
+    let isEnd = false;
     
-    // Check if next characters are "--", which means end boundary
-    const nextBytes = body.subarray(
-      boundaryIndex + boundaryBuffer.length,
-      boundaryIndex + boundaryBuffer.length + 2
-    );
-    if (nextBytes.equals(Buffer.from("--"))) {
+    while (true) {
+      const idx = body.indexOf(delimiter, searchStart);
+      if (idx === -1) {
+        break;
+      }
+      
+      const off = idx + delimiter.length;
+      if (off + 2 <= body.length) {
+        const suffix = body.subarray(off, off + 2);
+        if (suffix.equals(Buffer.from("\r\n"))) {
+          delimMatchIndex = idx;
+          nextOffset = off;
+          break;
+        } else if (suffix.equals(Buffer.from("--"))) {
+          if (off + 4 <= body.length) {
+            const afterEnd = body.subarray(off + 2, off + 4);
+            if (!afterEnd.equals(Buffer.from("\r\n"))) {
+              searchStart = idx + 1;
+              continue;
+            }
+          }
+          delimMatchIndex = idx;
+          nextOffset = off;
+          isEnd = true;
+          break;
+        }
+      }
+      searchStart = idx + 1;
+    }
+    
+    if (delimMatchIndex === -1) {
       break;
     }
     
-    const nextLineIndex = body.indexOf(Buffer.from("\r\n"), boundaryIndex + boundaryBuffer.length);
-    if (nextLineIndex === -1) break;
-    
-    const partStart = nextLineIndex + 2;
-    const nextBoundaryIndex = body.indexOf(boundaryBuffer, partStart);
-    if (nextBoundaryIndex === -1) break;
-    
-    const partEnd = nextBoundaryIndex - 2; // Subtract \r\n
-    const partBuffer = body.subarray(partStart, partEnd);
-    
+    const partBuffer = body.subarray(partStart, delimMatchIndex);
     const headerEndIndex = partBuffer.indexOf(Buffer.from("\r\n\r\n"));
-    if (headerEndIndex === -1) {
-      index = nextBoundaryIndex;
-      continue;
+    if (headerEndIndex !== -1) {
+      const headersString = partBuffer.toString("utf8", 0, headerEndIndex);
+      const data = partBuffer.subarray(headerEndIndex + 4);
+      
+      const nameMatch = headersString.match(/name="([^"]+)"/);
+      if (nameMatch) {
+        const name = nameMatch[1];
+        const filenameMatch = headersString.match(/filename="([^"]+)"/);
+        const filename = filenameMatch ? filenameMatch[1] : undefined;
+        
+        const contentTypeMatch = headersString.match(/Content-Type:\s*([^\r\n;]+)/i);
+        const contentType = contentTypeMatch ? contentTypeMatch[1].trim() : undefined;
+        
+        const headerLines = headersString.split("\r\n").filter(Boolean);
+        const allHeadersValid = headerLines.every(line => line.includes(":"));
+        
+        if (allHeadersValid) {
+          parts.push({
+            name,
+            filename,
+            contentType,
+            data,
+          });
+        }
+      }
     }
     
-    const headersString = partBuffer.toString("utf8", 0, headerEndIndex);
-    const data = partBuffer.subarray(headerEndIndex + 4);
-    
-    const nameMatch = headersString.match(/name="([^"]+)"/);
-    if (!nameMatch) {
-      index = nextBoundaryIndex;
-      continue;
+    if (isEnd) {
+      break;
     }
     
-    const name = nameMatch[1];
-    const filenameMatch = headersString.match(/filename="([^"]+)"/);
-    const filename = filenameMatch ? filenameMatch[1] : undefined;
-    
-    const contentTypeMatch = headersString.match(/Content-Type:\s*([^\r\n;]+)/i);
-    const contentType = contentTypeMatch ? contentTypeMatch[1].trim() : undefined;
-    
-    parts.push({
-      name,
-      filename,
-      contentType,
-      data,
-    });
-    
-    index = nextBoundaryIndex;
+    partStart = nextOffset + 2;
   }
+  
   return parts;
 }

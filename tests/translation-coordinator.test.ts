@@ -7,6 +7,7 @@ import {
 import { CaptureFailure } from "@/lib/capture/capture-errors";
 import type { CapturedImage } from "@/types/capture";
 import type { TranslationApiRequestMetadata } from "@/types/translation-api";
+import { isBackgroundTranslationResponse } from "@/types/translation-pipeline";
 
 const captured: CapturedImage = {
   blob: new Blob(["pixels"], { type: "image/png" }),
@@ -542,5 +543,121 @@ describe("TranslationCoordinator", () => {
     });
 
     expect(coordinator.isActive(request.tabId)).toBe(false);
+  });
+
+  it("selects only local service when mode is local-demo and HTTP service when mode is development-api", async () => {
+    const localSpy = vi.fn(async () => ({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles }));
+    const httpSpy = vi.fn(async () => ({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles }));
+    const deps = dependencies({
+      services: {
+        "local-demo": { translate: localSpy },
+        "development-api": { translate: httpSpy },
+      },
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    await coordinator.translate({ ...request, serviceMode: "local-demo" });
+    expect(localSpy).toHaveBeenCalledTimes(1);
+    expect(httpSpy).not.toHaveBeenCalled();
+
+    localSpy.mockClear();
+    httpSpy.mockClear();
+
+    await coordinator.translate({ ...request, serviceMode: "development-api" });
+    expect(httpSpy).toHaveBeenCalledTimes(1);
+    expect(localSpy).not.toHaveBeenCalled();
+  });
+
+  it("shares the same per-tab lock between local and dev API modes", async () => {
+    let resolveLocal!: (val: any) => void;
+    const localPromise = new Promise((resolve) => { resolveLocal = resolve; });
+    const localSpy = vi.fn(() => localPromise);
+    const deps = dependencies({
+      services: {
+        "local-demo": { translate: localSpy },
+        "development-api": { translate: vi.fn() },
+      },
+    });
+    const coordinator = new TranslationCoordinator(deps);
+
+    const promise1 = coordinator.translate({ ...request, serviceMode: "local-demo" });
+    const promise2 = coordinator.translate({ ...request, serviceMode: "development-api" });
+
+    expect(await promise2).toEqual({
+      success: false,
+      error: { code: "translation-in-progress" },
+    });
+
+    resolveLocal({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles });
+    await promise1;
+  });
+
+  it("rejects unknown modes before allocating locks or starting capture", async () => {
+    const deps = dependencies();
+    const coordinator = new TranslationCoordinator(deps);
+
+    const badRequest = { ...request, serviceMode: "unknown-mode" as any };
+    const response = await coordinator.translate(badRequest);
+    expect(response).toEqual({
+      success: false,
+      error: { code: "invalid-service-mode" },
+    });
+    expect(deps.captureImage).not.toHaveBeenCalled();
+    expect(coordinator.isActive(request.tabId)).toBe(false);
+  });
+
+  it("maps invalid service responses, request ID mismatches, and page ID mismatches to backend-invalid-response for dev mode and preserves invalid-translation-response for local mode", async () => {
+    const invalidResponses = [
+      { contractVersion: 2, requestId: "request-1", pageId: "page-2", bubbles },
+      { contractVersion: 1, requestId: "wrong-id", pageId: "page-2", bubbles },
+      { contractVersion: 1, requestId: "request-1", pageId: "wrong-page", bubbles },
+    ];
+
+    for (const badResp of invalidResponses) {
+      const deps = dependencies({
+        services: {
+          "local-demo": { translate: vi.fn() },
+          "development-api": { translate: vi.fn(async () => badResp) },
+        },
+      });
+      const coordinator = new TranslationCoordinator(deps);
+      const res = await coordinator.translate({ ...request, serviceMode: "development-api" });
+      expect(res).toEqual({
+        success: false,
+        error: { code: "backend-invalid-response" },
+      });
+    }
+
+    const depsLocal = dependencies({
+      services: {
+        "local-demo": { translate: vi.fn(async () => invalidResponses[0]) },
+        "development-api": { translate: vi.fn() },
+      },
+    });
+    const coordinatorLocal = new TranslationCoordinator(depsLocal);
+    const resLocal = await coordinatorLocal.translate({ ...request, serviceMode: "local-demo" });
+    expect(resLocal).toEqual({
+      success: false,
+      error: { code: "invalid-translation-response" },
+    });
+  });
+
+  it("ensures popup-safe success response contains no image bytes, secrets or endpoints", () => {
+    const response = {
+      success: true,
+      pageId: "page-2",
+      pageNumber: 2,
+      bubbleCount: 1,
+      demo: true,
+      serviceMode: "development-api",
+    } as const;
+    
+    expect(isBackgroundTranslationResponse(response)).toBe(true);
+    
+    const keys = Object.keys(response);
+    expect(keys).not.toContain("blob");
+    expect(keys).not.toContain("image");
+    expect(keys).not.toContain("endpoint");
+    expect(keys).not.toContain("apiKey");
   });
 });

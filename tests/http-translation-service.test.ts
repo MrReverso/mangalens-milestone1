@@ -77,7 +77,6 @@ describe("HttpTranslationService", () => {
     expect(fetchOptions?.cache).toBe("no-store");
     expect(fetchOptions?.referrerPolicy).toBe("no-referrer");
 
-    // The body must be a FormData object
     const body = fetchOptions?.body as FormData;
     expect(body).toBeInstanceOf(FormData);
 
@@ -91,6 +90,54 @@ describe("HttpTranslationService", () => {
     expect(imagePart.type).toBe("image/png");
 
     expect(response).toBeDefined();
+  });
+
+  it("never retries on connection failure and throws backend-unavailable", async () => {
+    const mockFetch = vi.fn(async () => {
+      throw new Error("Connection refused");
+    });
+    const service = new HttpTranslationService({
+      endpoint: "http://127.0.0.1:8787/v1/translate",
+      fetchImpl: mockFetch as any,
+    });
+    await expect(
+      service.translate({ image: imageBlob, metadata }, new AbortController().signal)
+    ).rejects.toThrow("backend-unavailable");
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects redirected responses", async () => {
+    const mockFetch = vi.fn(async () => {
+      return {
+        status: 200,
+        redirected: true,
+        headers: new Headers({ "content-type": "application/json" }),
+      } as unknown as Response;
+    });
+    const service = new HttpTranslationService({
+      endpoint: "http://127.0.0.1:8787/v1/translate",
+      fetchImpl: mockFetch as any,
+    });
+    await expect(
+      service.translate({ image: imageBlob, metadata }, new AbortController().signal)
+    ).rejects.toThrow("backend-request-failed");
+  });
+
+  it("rejects responses with missing bodies", async () => {
+    const mockFetch = vi.fn(async () => {
+      return {
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        body: null,
+      } as unknown as Response;
+    });
+    const service = new HttpTranslationService({
+      endpoint: "http://127.0.0.1:8787/v1/translate",
+      fetchImpl: mockFetch as any,
+    });
+    await expect(
+      service.translate({ image: imageBlob, metadata }, new AbortController().signal)
+    ).rejects.toThrow("backend-request-failed");
   });
 
   it("rejects non-PNG images before dispatching fetch", async () => {
@@ -150,7 +197,7 @@ describe("HttpTranslationService", () => {
       ...metadata,
       capture: {
         ...metadata.capture,
-        byteLength: 9999, // Mismatched size
+        byteLength: 9999,
       },
     };
 
@@ -162,19 +209,19 @@ describe("HttpTranslationService", () => {
 
   it("rejects invalid endpoints on construction and execution", () => {
     expect(() => new HttpTranslationService({
-      endpoint: "https://127.0.0.1:8787/v1/translate", // https instead of http
+      endpoint: "https://127.0.0.1:8787/v1/translate",
     })).toThrow("must use http:");
 
     expect(() => new HttpTranslationService({
-      endpoint: "http://localhost:8787/v1/translate", // hostname not 127.0.0.1
+      endpoint: "http://localhost:8787/v1/translate",
     })).toThrow("must be 127.0.0.1");
 
     expect(() => new HttpTranslationService({
-      endpoint: "http://127.0.0.1:9090/v1/translate", // port not 8787
+      endpoint: "http://127.0.0.1:9090/v1/translate",
     })).toThrow("must be 8787");
 
     expect(() => new HttpTranslationService({
-      endpoint: "http://127.0.0.1:8787/translate", // wrong path
+      endpoint: "http://127.0.0.1:8787/translate",
     })).toThrow("must be /v1/translate");
   });
 
@@ -196,26 +243,165 @@ describe("HttpTranslationService", () => {
     ).rejects.toThrow("backend-http-error");
   });
 
-  it("rejects non-JSON Content-Type response headers", async () => {
+  it("validates exact JSON media-types and param values properly", async () => {
+    const validTypes = [
+      "application/json",
+      "application/json; charset=utf-8",
+      "application/json; charset=UTF-8",
+      "APPLICATION/JSON; CHARSET=UTF-8",
+    ];
+
+    const invalidTypes = [
+      "application/jsonp",
+      "application/json-patch+json",
+      "text/application/json",
+      "text/html",
+      "",
+    ];
+
+    const responsePayload = new TextEncoder().encode(JSON.stringify({
+      contractVersion: 1,
+      requestId: "req-123",
+      pageId: "page-1",
+      bubbles: [],
+    }));
+
+    for (const contentType of validTypes) {
+      const mockFetch = vi.fn(async () => {
+        return {
+          status: 200,
+          headers: new Headers(contentType ? { "content-type": contentType } : {}),
+          body: {
+            getReader() {
+              let idx = 0;
+              return {
+                async read() {
+                  if (idx === 0) {
+                    idx++;
+                    return { done: false, value: responsePayload };
+                  }
+                  return { done: true, value: undefined };
+                },
+                releaseLock() {},
+              };
+            },
+          },
+        } as unknown as Response;
+      });
+      const service = new HttpTranslationService({
+        endpoint: "http://127.0.0.1:8787/v1/translate",
+        fetchImpl: mockFetch as any,
+      });
+      const res = await service.translate({ image: imageBlob, metadata }, new AbortController().signal);
+      expect(res).toBeDefined();
+    }
+
+    for (const contentType of invalidTypes) {
+      const mockFetch = vi.fn(async () => {
+        return {
+          status: 200,
+          headers: new Headers(contentType ? { "content-type": contentType } : {}),
+        } as unknown as Response;
+      });
+      const service = new HttpTranslationService({
+        endpoint: "http://127.0.0.1:8787/v1/translate",
+        fetchImpl: mockFetch as any,
+      });
+      await expect(
+        service.translate({ image: imageBlob, metadata }, new AbortController().signal)
+      ).rejects.toThrow("backend-invalid-content-type");
+    }
+  });
+
+  it("calls reader.cancel when response exceeds max bytes limit", async () => {
+    const cancelSpy = vi.fn(async () => {});
     const mockFetch = vi.fn(async () => {
       return {
         status: 200,
-        headers: new Headers({ "content-type": "text/html" }),
+        headers: new Headers({ "content-type": "application/json" }),
+        body: {
+          getReader() {
+            return {
+              async read() {
+                return { done: false, value: new Uint8Array(100) };
+              },
+              cancel: cancelSpy,
+              releaseLock() {},
+            };
+          },
+        },
       } as unknown as Response;
     });
+    const service = new HttpTranslationService({
+      endpoint: "http://127.0.0.1:8787/v1/translate",
+      fetchImpl: mockFetch as any,
+      maxResponseBytes: 50,
+    });
+    await expect(
+      service.translate({ image: imageBlob, metadata }, new AbortController().signal)
+    ).rejects.toThrow("backend-response-too-large");
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
+  });
 
+  it("calls reader.cancel and throws AbortError if aborted during read", async () => {
+    const cancelSpy = vi.fn(async () => {});
+    const controller = new AbortController();
+    const mockFetch = vi.fn(async () => {
+      return {
+        status: 200,
+        headers: new Headers({ "content-type": "application/json" }),
+        body: {
+          getReader() {
+            return {
+              async read() {
+                controller.abort();
+                return { done: false, value: new Uint8Array(10) };
+              },
+              cancel: cancelSpy,
+              releaseLock() {},
+            };
+          },
+        },
+      } as unknown as Response;
+    });
     const service = new HttpTranslationService({
       endpoint: "http://127.0.0.1:8787/v1/translate",
       fetchImpl: mockFetch as any,
     });
-
-    await expect(
-      service.translate({ image: imageBlob, metadata }, new AbortController().signal)
-    ).rejects.toThrow("backend-invalid-content-type");
+    const promise = service.translate({ image: imageBlob, metadata }, controller.signal);
+    await expect(promise).rejects.toThrow();
+    try {
+      await promise;
+    } catch (err: any) {
+      expect(err.name).toBe("AbortError");
+    }
+    expect(cancelSpy).toHaveBeenCalledTimes(1);
   });
 
-  it("rejects responses exceeding maxResponseBytes limit during chunk reading", async () => {
-    const chunks = [new Uint8Array(100), new Uint8Array(100)];
+  it("throws AbortError if signal is aborted before fetch settles", async () => {
+    const controller = new AbortController();
+    const mockFetch = vi.fn(async (_url: string, _init?: RequestInit) => {
+      controller.abort();
+      throw new DOMException("The user aborted a request.", "AbortError");
+    });
+    const service = new HttpTranslationService({
+      endpoint: "http://127.0.0.1:8787/v1/translate",
+      fetchImpl: mockFetch as any,
+    });
+    const promise = service.translate({ image: imageBlob, metadata }, controller.signal);
+    await expect(promise).rejects.toThrow();
+    try {
+      await promise;
+    } catch (err: any) {
+      expect(err.name).toBe("AbortError");
+    }
+  });
+
+  it("registers and cleans up abort listener on success and failure", async () => {
+    const signal = new AbortController().signal;
+    const addSpy = vi.spyOn(signal, "addEventListener");
+    const removeSpy = vi.spyOn(signal, "removeEventListener");
+
     const mockFetch = vi.fn(async () => {
       return {
         status: 200,
@@ -225,8 +411,17 @@ describe("HttpTranslationService", () => {
             let idx = 0;
             return {
               async read() {
-                if (idx < chunks.length) {
-                  return { done: false, value: chunks[idx++] };
+                if (idx === 0) {
+                  idx++;
+                  return {
+                    done: false,
+                    value: new TextEncoder().encode(JSON.stringify({
+                      contractVersion: 1,
+                      requestId: "req-123",
+                      pageId: "page-1",
+                      bubbles: [],
+                    })),
+                  };
                 }
                 return { done: true, value: undefined };
               },
@@ -240,12 +435,11 @@ describe("HttpTranslationService", () => {
     const service = new HttpTranslationService({
       endpoint: "http://127.0.0.1:8787/v1/translate",
       fetchImpl: mockFetch as any,
-      maxResponseBytes: 150, // limit is lower than 200 bytes total response
     });
 
-    await expect(
-      service.translate({ image: imageBlob, metadata }, new AbortController().signal)
-    ).rejects.toThrow("backend-response-too-large");
+    await service.translate({ image: imageBlob, metadata }, signal);
+    expect(addSpy).toHaveBeenCalledWith("abort", expect.any(Function));
+    expect(removeSpy).toHaveBeenCalledWith("abort", expect.any(Function));
   });
 
   it("rejects invalid or malformed JSON payloads", async () => {

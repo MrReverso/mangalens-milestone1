@@ -53,6 +53,7 @@ export type TranslationPipelineErrorCode =
   | CaptureErrorCode
   | "translation-in-progress"
   | "invalid-language"
+  | "invalid-service-mode"
   | "invalid-translation-response"
   | "translation-service-failed"
   | "target-page-missing"
@@ -107,6 +108,7 @@ const PIPELINE_ERRORS = new Set<string>([
   "unexpected-error",
   "translation-in-progress",
   "invalid-language",
+  "invalid-service-mode",
   "invalid-translation-response",
   "translation-service-failed",
   "target-page-missing",

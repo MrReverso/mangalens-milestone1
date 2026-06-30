@@ -15,6 +15,12 @@ export class HttpTranslationService implements TranslationService {
     this.fetchImpl = options.fetchImpl ?? fetch;
     this.maxResponseBytes = options.maxResponseBytes ?? 256 * 1024;
 
+    if (typeof this.maxResponseBytes !== "number" ||
+        !Number.isSafeInteger(this.maxResponseBytes) ||
+        this.maxResponseBytes <= 0) {
+      throw new Error("Invalid maxResponseBytes value");
+    }
+
     // Validate the configured endpoint immediately on construction
     validateTranslationUrl(this.endpoint);
   }
@@ -96,8 +102,22 @@ export class HttpTranslationService implements TranslationService {
     }
 
     const contentType = response.headers.get("content-type");
-    if (!contentType || !contentType.toLowerCase().startsWith("application/json")) {
+    if (!contentType) {
       throw new Error("backend-invalid-content-type");
+    }
+    const [mediaType, ...paramParts] = contentType.split(";");
+    const normalizedMediaType = mediaType.trim().toLowerCase();
+    if (normalizedMediaType !== "application/json") {
+      throw new Error("backend-invalid-content-type");
+    }
+    for (const part of paramParts) {
+      const match = part.trim().match(/^charset\s*=\s*(.+)$/i);
+      if (match) {
+        const charset = match[1].trim().replace(/['"]/g, "").toLowerCase();
+        if (charset !== "utf-8") {
+          throw new Error("backend-invalid-content-type");
+        }
+      }
     }
 
     // 5. Read response body using a size-bounded method
@@ -168,22 +188,46 @@ async function readResponseBody(
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];
   let totalBytes = 0;
+  let abortError: DOMException | null = null;
+
+  let cancelled = false;
+
+  const onAbort = () => {
+    abortError = new DOMException("Translation cancelled", "AbortError");
+    cancelled = true;
+    reader.cancel().catch(() => {});
+  };
+
+  signal.addEventListener("abort", onAbort);
+
   try {
     while (true) {
       if (signal.aborted) {
-        throw new DOMException("Translation cancelled", "AbortError");
+        throw abortError || new DOMException("Translation cancelled", "AbortError");
       }
       const { done, value } = await reader.read();
       if (done) break;
       if (value) {
         totalBytes += value.length;
         if (totalBytes > maxBytes) {
+          cancelled = true;
+          await reader.cancel().catch(() => {});
           throw new Error("backend-response-too-large");
         }
         chunks.push(value);
       }
     }
+  } catch (error) {
+    if (signal.aborted) {
+      throw abortError || new DOMException("Translation cancelled", "AbortError");
+    }
+    if (!cancelled) {
+      cancelled = true;
+      await reader.cancel().catch(() => {});
+    }
+    throw error;
   } finally {
+    signal.removeEventListener("abort", onAbort);
     reader.releaseLock();
   }
   const result = new Uint8Array(totalBytes);

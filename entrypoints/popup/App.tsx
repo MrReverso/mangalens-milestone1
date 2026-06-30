@@ -405,7 +405,7 @@ export default function App() {
         return;
       }
       setHasTranslations(true);
-      const modeText = mode === "local-demo" ? "Local demo" : "Dev API demo";
+      const modeText = rawResponse.serviceMode === "local-demo" ? "Local demo" : "Dev API demo";
       setStatus({
         kind: "success",
         message: `Translated Page ${rawResponse.pageNumber} \u00b7 ` +

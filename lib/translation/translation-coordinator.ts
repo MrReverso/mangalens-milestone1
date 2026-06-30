@@ -101,13 +101,20 @@ export function createBackgroundTranslationMessageHandler(
       return true;
     }
 
+    if (serviceMode !== "local-demo" && serviceMode !== "development-api") {
+      sendResponse({
+        success: false,
+        error: { code: "invalid-service-mode" },
+      });
+      return true;
+    }
+
     const keys = ["type", "tabId", "windowId", "sourceLanguage", "targetLanguage", "serviceMode"];
     const hasAllowedKeys = Object.keys(message).every((key) => keys.includes(key)) &&
       keys.every((key) => key in message);
 
     if (!isSourceLanguage(sourceLanguage) ||
         !isTargetLanguage(targetLanguage) ||
-        (serviceMode !== "local-demo" && serviceMode !== "development-api") ||
         !hasAllowedKeys) {
       sendResponse({
         success: false,
@@ -154,7 +161,7 @@ export class TranslationCoordinator {
       return { success: false, error: { code: "translation-in-progress" } };
     }
     if (request.serviceMode !== "local-demo" && request.serviceMode !== "development-api") {
-      return { success: false, error: { code: "unexpected-error" } };
+      return { success: false, error: { code: "invalid-service-mode" } };
     }
     const service = this.dependencies.services[request.serviceMode];
     if (!service) {
@@ -265,6 +272,9 @@ export class TranslationCoordinator {
     if (!response ||
         response.requestId !== requestId ||
         response.pageId !== metadata.pageId) {
+      if (request.serviceMode === "development-api") {
+        throw new TranslationPipelineFailure("backend-invalid-response");
+      }
       throw new TranslationPipelineFailure("invalid-translation-response");
     }
 
