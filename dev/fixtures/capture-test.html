@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>MangaLens capture fixture</title>
+  <style>
+    body { margin: 0; background: #e8e8e8; color: #222; font-family: system-ui, sans-serif; }
+    main { max-width: 760px; margin: 24px auto; }
+    img { display: block; width: 720px; height: auto; margin: 24px auto; background: white; }
+    .partial { margin-left: -180px; }
+    .reader { height: 520px; overflow: auto; border: 3px solid #555; background: #bbb; }
+    .spacer { height: 500px; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>MangaLens local capture fixture</h1>
+    <p>No remote or copyrighted images are used.</p>
+    <img src="/page-visible.svg" alt="Fully visible placeholder comic page">
+    <img class="partial" src="/page-partial.svg" alt="Partially visible placeholder comic page">
+    <img src="/page-tall.svg" alt="Placeholder page taller than the viewport">
+    <div class="reader">
+      <div class="spacer"></div>
+      <img src="/page-visible.svg" alt="Placeholder inside nested reader">
+      <div class="spacer"></div>
+    </div>
+  </main>
+</body>
+</html>

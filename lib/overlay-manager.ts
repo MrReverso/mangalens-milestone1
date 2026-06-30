@@ -23,6 +23,7 @@ export class OverlayManager {
   private resizeHandler: (() => void) | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private throttledUpdate: (() => void) | null = null;
+  private captureSuppressed = false;
 
   /**
    * Create the overlay root element if it doesn't exist yet.
@@ -48,6 +49,7 @@ export class OverlayManager {
       pointerEvents: "none",
       zIndex: "2147483640",
       overflow: "hidden",
+      visibility: this.captureSuppressed ? "hidden" : "visible",
     } as CSSStyleDeclaration);
     document.documentElement.appendChild(el);
     this.root = el;
@@ -185,6 +187,7 @@ export class OverlayManager {
       this.root.remove();
       this.root = null;
     }
+    this.captureSuppressed = false;
   }
 
   /**
@@ -214,6 +217,13 @@ export class OverlayManager {
     this.resizeObserver?.unobserve(img);
     marker.remove();
     this.markers.delete(img);
+  }
+
+  setCaptureSuppressed(suppressed: boolean): void {
+    this.captureSuppressed = suppressed;
+    if (this.root) {
+      this.root.style.visibility = suppressed ? "hidden" : "visible";
+    }
   }
 }
 

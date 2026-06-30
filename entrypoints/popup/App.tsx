@@ -14,7 +14,10 @@ import type {
   ScanStatusResponse,
   TranslationCommandResponse,
   TranslationStatusResponse,
+  BackgroundCaptureResponse,
 } from "@/lib/messages";
+import { isBackgroundCaptureResponse } from "@/types/capture";
+import { captureErrorMessage } from "@/lib/capture/capture-status";
 import "./style.css";
 
 // ── Status States ──────────────────────────────────────────────
@@ -92,6 +95,7 @@ export default function App() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [translationsVisible, setTranslationsVisible] = useState(true);
   const [hasTranslations, setHasTranslations] = useState(false);
+  const [isCapturing, setIsCapturing] = useState(false);
 
   // ── Load persisted settings on mount ─────────────────────────
   useEffect(() => {
@@ -302,6 +306,48 @@ export default function App() {
     setStatus({ kind: "success", message: "Translation preview cancelled" });
   }
 
+  async function handleTestCapture(): Promise<void> {
+    setIsCapturing(true);
+    setStatus({ kind: "scanning", message: "Testing image capture\u2026" });
+    try {
+      const tab = await getActiveTab();
+      if (!tab.id || !tab.windowId) throw new Error("restricted-page");
+      await ensureContentScript(tab);
+      const rawResponse: unknown = await chrome.runtime.sendMessage({
+          type: "CAPTURE_FIRST_VISIBLE_PAGE" as const,
+          tabId: tab.id,
+          windowId: tab.windowId,
+        });
+      if (!isBackgroundCaptureResponse(rawResponse)) {
+        throw new Error("invalid-capture-response");
+      }
+      const response: BackgroundCaptureResponse = rawResponse;
+      if (!response.success) {
+        setStatus({
+          kind: "error",
+          message: captureErrorMessage(response.error.code),
+        });
+        return;
+      }
+      const sizeKb = Math.max(1, Math.round(response.metadata.byteLength / 1024));
+      setStatus({
+        kind: "success",
+        message: `Captured Page ${response.metadata.pageNumber} \u00b7 ` +
+          `${response.metadata.pixelWidth}\u00d7${response.metadata.pixelHeight} ` +
+          `\u00b7 ${sizeKb} KB`,
+      });
+    } catch (error: unknown) {
+      setStatus({
+        kind: "error",
+        message: error instanceof Error && error.message === "restricted-page"
+          ? "MangaLens cannot capture this page"
+          : "Image capture failed",
+      });
+    } finally {
+      setIsCapturing(false);
+    }
+  }
+
   // ── Clear Markers ────────────────────────────────────────────
   async function handleClear(): Promise<void> {
     try {
@@ -359,7 +405,7 @@ export default function App() {
       <section className="popup-actions">
         <button
           className={`btn ${hasMarkers ? "btn-secondary" : "btn-primary"}`}
-          disabled={isScanning}
+          disabled={isScanning || isCapturing}
           onClick={handleScan}
         >
           {isScanning ? "Scanning\u2026" : "Scan Manga Page"}
@@ -368,10 +414,20 @@ export default function App() {
         {hasMarkers && (
           <button
             className="btn btn-primary"
-            disabled={isTranslating}
+            disabled={isTranslating || isCapturing}
             onClick={handlePreviewTranslation}
           >
             {isTranslating ? "Translating\u2026" : "Preview Translation"}
+          </button>
+        )}
+
+        {hasMarkers && (
+          <button
+            className="btn btn-secondary"
+            disabled={isScanning || isTranslating || isCapturing}
+            onClick={handleTestCapture}
+          >
+            {isCapturing ? "Capturing\u2026" : "Test Image Capture"}
           </button>
         )}
 

@@ -6,6 +6,7 @@ import type {
   ScanStatusResponse,
   TranslationCommandResponse,
   TranslationStatusResponse,
+  CaptureContentResponse,
 } from "@/lib/messages";
 import type {
   TranslatePageInput,
@@ -61,9 +62,10 @@ function send(
   controller: MangaScannerController,
   message: ExtensionMessage
 ): ScanPageResponse | ScanStatusResponse | TranslationCommandResponse |
-  TranslationStatusResponse {
+  TranslationStatusResponse | CaptureContentResponse {
   let response: ScanPageResponse | ScanStatusResponse |
-    TranslationCommandResponse | TranslationStatusResponse | undefined;
+    TranslationCommandResponse | TranslationStatusResponse |
+    CaptureContentResponse | undefined;
   controller.messageHandler(
     message,
     {} as chrome.runtime.MessageSender,

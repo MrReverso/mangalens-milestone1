@@ -4,6 +4,12 @@
 
 // ── Commands (popup → content) ─────────────────────────────────
 import type { SourceLanguage, TargetLanguage } from "@/types/extension";
+import type {
+  BackgroundCaptureResponse,
+  CapturePrepareResponse,
+  CaptureRestoreResponse,
+} from "@/types/capture";
+import { isNonEmptyString, isPositiveInteger } from "@/types/capture";
 
 export interface ScanPageMessage {
   readonly type: "SCAN_PAGE";
@@ -34,6 +40,22 @@ export interface ClearTranslationsMessage {
 
 export interface GetTranslationStatusMessage {
   readonly type: "GET_TRANSLATION_STATUS";
+}
+
+export interface PrepareVisiblePageCaptureMessage {
+  readonly type: "PREPARE_VISIBLE_PAGE_CAPTURE";
+  readonly captureToken: string;
+}
+
+export interface RestoreAfterPageCaptureMessage {
+  readonly type: "RESTORE_AFTER_PAGE_CAPTURE";
+  readonly captureToken: string;
+}
+
+export interface CaptureFirstVisiblePageMessage {
+  readonly type: "CAPTURE_FIRST_VISIBLE_PAGE";
+  readonly tabId: number;
+  readonly windowId: number;
 }
 
 // ── Responses (content → popup) ────────────────────────────────
@@ -70,7 +92,7 @@ export type TranslationCommandResponse =
 
 // ── Union types ────────────────────────────────────────────────
 
-export type ExtensionMessage =
+export type PopupToContentMessage =
   | ScanPageMessage
   | ClearMarkersMessage
   | GetScanStatusMessage
@@ -79,4 +101,55 @@ export type ExtensionMessage =
   | ClearTranslationsMessage
   | GetTranslationStatusMessage;
 
+export type BackgroundToContentMessage =
+  | PrepareVisiblePageCaptureMessage
+  | RestoreAfterPageCaptureMessage;
+
+export type ContentScriptMessage =
+  | PopupToContentMessage
+  | BackgroundToContentMessage;
+
+export type PopupToBackgroundMessage = CaptureFirstVisiblePageMessage;
+
+export type ExtensionMessage = PopupToContentMessage;
 export type ScanPageResponse = ScanSuccessResponse | ScanErrorResponse;
+
+export type CaptureContentResponse =
+  | CapturePrepareResponse
+  | CaptureRestoreResponse;
+
+export type { BackgroundCaptureResponse };
+
+const CONTENT_MESSAGE_TYPES = new Set<string>([
+  "SCAN_PAGE",
+  "CLEAR_MARKERS",
+  "GET_SCAN_STATUS",
+  "START_MOCK_TRANSLATION",
+  "SET_TRANSLATIONS_VISIBLE",
+  "CLEAR_TRANSLATIONS",
+  "GET_TRANSLATION_STATUS",
+  "PREPARE_VISIBLE_PAGE_CAPTURE",
+  "RESTORE_AFTER_PAGE_CAPTURE",
+]);
+
+export function isContentScriptMessage(
+  value: unknown
+): value is ContentScriptMessage {
+  if (typeof value !== "object" || value === null ||
+      !("type" in value) || typeof value.type !== "string" ||
+      !CONTENT_MESSAGE_TYPES.has(value.type)) return false;
+  if (value.type === "PREPARE_VISIBLE_PAGE_CAPTURE" ||
+      value.type === "RESTORE_AFTER_PAGE_CAPTURE") {
+    return "captureToken" in value && isNonEmptyString(value.captureToken);
+  }
+  return true;
+}
+
+export function isPopupToBackgroundMessage(
+  value: unknown
+): value is PopupToBackgroundMessage {
+  return typeof value === "object" && value !== null &&
+    "type" in value && value.type === "CAPTURE_FIRST_VISIBLE_PAGE" &&
+    "tabId" in value && isPositiveInteger(value.tabId) &&
+    "windowId" in value && isPositiveInteger(value.windowId);
+}
