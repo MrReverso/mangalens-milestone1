@@ -5,6 +5,7 @@ import type {
   ScanStatusResponse,
   TranslationCommandResponse,
   TranslationStatusResponse,
+  ApplyTranslationResultResponse,
 } from "@/lib/messages";
 import { isContentScriptMessage } from "@/lib/messages";
 import { isImageVisible } from "@/lib/image-position";
@@ -29,13 +30,16 @@ import type {
   CapturePrepareResponse,
   CaptureRestoreResponse,
 } from "@/types/capture";
+import type { TranslationBubble } from "@/types/translation";
+import { validateTranslationApiSuccessResponse } from "@/types/translation-api";
 
 type ScannerResponse =
   | ScanPageResponse
   | ScanStatusResponse
   | TranslationCommandResponse
   | TranslationStatusResponse
-  | CaptureContentResponse;
+  | CaptureContentResponse
+  | ApplyTranslationResultResponse;
 type SendResponse = (response: ScannerResponse) => void;
 
 interface PageSession extends PageTranslation {
@@ -66,6 +70,7 @@ export class MangaScannerController {
   private translationsVisible = true;
   private nextPageId = 1;
   private preparedCapture: PreparedCapture | null = null;
+  private readonly appliedRequestByPage = new Map<string, string>();
 
   constructor(
     translationProvider: TranslationProvider = new MockTranslationProvider()
@@ -115,6 +120,13 @@ export class MangaScannerController {
         return true;
       case "RESTORE_AFTER_PAGE_CAPTURE":
         sendResponse(this.restoreAfterPageCapture(message.captureToken));
+        return false;
+      case "APPLY_TRANSLATION_RESULT":
+        sendResponse(this.applyTranslationResult(
+          message.requestId,
+          message.pageId,
+          message.bubbles
+        ));
         return false;
       default:
         return false;
@@ -270,6 +282,58 @@ export class MangaScannerController {
     return true;
   }
 
+  applyTranslationResult(
+    requestId: string,
+    pageId: string,
+    bubbles: readonly TranslationBubble[]
+  ): ApplyTranslationResultResponse {
+    const validated = validateTranslationApiSuccessResponse({
+      contractVersion: 1,
+      requestId,
+      pageId,
+      bubbles,
+    });
+    if (!validated) {
+      return {
+        success: false,
+        error: { code: "invalid-translation-response" },
+      };
+    }
+    const page = this.pages.get(pageId);
+    if (!page) {
+      return { success: false, error: { code: "target-page-missing" } };
+    }
+    if (!page.element.isConnected) {
+      return {
+        success: false,
+        error: { code: "target-page-disconnected" },
+      };
+    }
+    if (this.appliedRequestByPage.get(pageId) === requestId) {
+      return {
+        success: true,
+        pageId,
+        bubbleCount: page.bubbles.length,
+      };
+    }
+
+    try {
+      this.translationQueue.cancel(pageId);
+      page.status = "complete";
+      page.error = undefined;
+      page.bubbles = validated.bubbles;
+      this.appliedRequestByPage.set(pageId, requestId);
+      this.translationOverlay.renderPage(pageId, page.element, page.bubbles);
+      return {
+        success: true,
+        pageId,
+        bubbleCount: page.bubbles.length,
+      };
+    } catch {
+      return { success: false, error: { code: "apply-failed" } };
+    }
+  }
+
   private scanPage(sendResponse: SendResponse): void {
     if (this.isScanning) {
       sendResponse({
@@ -420,6 +484,7 @@ export class MangaScannerController {
       }
       this.translationQueue.cancel(page.pageId);
       this.translationOverlay.removePage(page.pageId);
+      this.appliedRequestByPage.delete(page.pageId);
       this.pages.delete(page.pageId);
       this.pageByElement.delete(img);
     }
@@ -489,6 +554,7 @@ export class MangaScannerController {
   private resetTranslations(): void {
     this.translationQueue.clear();
     this.translationOverlay.clear();
+    this.appliedRequestByPage.clear();
     for (const page of this.pages.values()) {
       page.status = "detected";
       page.bubbles = [];

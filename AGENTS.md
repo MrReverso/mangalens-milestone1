@@ -20,3 +20,8 @@ and never merge automatically.
 Keep popup, content-script, and background responsibilities separated. Never use
 `innerHTML` or unsafe HTML. Clean up listeners, observers, timers, locks, and
 AbortControllers.
+
+Captured image bytes must never cross extension message boundaries. Runtime
+validate every backend-style response, apply translation results through
+scanner-controller page sessions, and keep local/demo services deterministic.
+Network access requires an explicit future milestone and permission review.

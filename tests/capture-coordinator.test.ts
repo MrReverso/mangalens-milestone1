@@ -77,6 +77,19 @@ describe("CaptureCoordinator", () => {
     });
   });
 
+  it("returns CapturedImage only to trusted background callers", async () => {
+    const result = await new CaptureCoordinator(dependencies())
+      .captureImageForInternalUse(request);
+    expect(result.blob).toBeInstanceOf(Blob);
+    expect(result.metadata).toEqual(metadata);
+  });
+
+  it("keeps diagnostic responses metadata-only after internal refactoring", async () => {
+    const result = await new CaptureCoordinator(dependencies()).capture(request);
+    expect(result).toEqual({ success: true, metadata });
+    expect("blob" in result).toBe(false);
+  });
+
   it("restores overlays after screenshot failure", async () => {
     const deps = dependencies({
       captureVisibleTab: vi.fn(async () => {
@@ -143,6 +156,15 @@ describe("CaptureCoordinator", () => {
     });
     await vi.advanceTimersByTimeAsync(20);
     await first;
+  });
+
+  it("rejects diagnostic capture while translation reserves the tab", async () => {
+    const deps = dependencies({ isTabReserved: () => true });
+    expect(await new CaptureCoordinator(deps).capture(request)).toEqual({
+      success: false,
+      error: { code: "capture-in-progress" },
+    });
+    expect(deps.captureVisibleTab).not.toHaveBeenCalled();
   });
 
   it("releases its lock after failure and permits retry", async () => {
