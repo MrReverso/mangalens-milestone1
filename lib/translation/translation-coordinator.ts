@@ -32,6 +32,14 @@ const BACKEND_ERRORS = new Set<string>([
   "backend-invalid-json",
   "backend-invalid-response",
   "backend-timeout",
+  "ocr-not-configured",
+  "ocr-auth-failed",
+  "ocr-unavailable",
+  "ocr-rate-limited",
+  "ocr-timeout",
+  "ocr-response-too-large",
+  "ocr-invalid-response",
+  "ocr-no-text",
 ]);
 
 function isBackendErrorCode(code: string): boolean {
@@ -123,7 +131,14 @@ export function createBackgroundTranslationMessageHandler(
       return true;
     }
 
-    const validMessage = message as unknown as TranslateVisiblePageMessage;
+    const validMessage: TranslateVisiblePageMessage = {
+      type: "TRANSLATE_VISIBLE_PAGE_LOCAL",
+      tabId,
+      windowId,
+      sourceLanguage,
+      targetLanguage,
+      serviceMode,
+    };
     coordinator.translate(validMessage).then(
       sendResponse,
       () => sendResponse({
@@ -198,7 +213,9 @@ export class TranslationCoordinator {
     if (first.kind === "timeout") {
       operation.controller.abort();
       this.startRetirementDeadline(request.tabId, operation);
-      const code = request.serviceMode === "development-api" ? "backend-timeout" : "timeout";
+      const code = request.serviceMode === "development-api"
+        ? "ocr-timeout"
+        : "timeout";
       return { success: false, error: { code } };
     }
     if (first.kind === "success") return first.response;
@@ -261,7 +278,9 @@ export class TranslationCoordinator {
       }, signal);
     } catch (error: unknown) {
       if (signal.aborted || isAbortError(error)) {
-        throw new TranslationPipelineFailure("timeout");
+        throw new TranslationPipelineFailure(
+          request.serviceMode === "development-api" ? "ocr-timeout" : "timeout"
+        );
       }
       if (error instanceof Error && isBackendErrorCode(error.message)) {
         throw new TranslationPipelineFailure(error.message as TranslationPipelineErrorCode);

@@ -25,3 +25,7 @@ web-ext.config.ts
 *.njsproj
 *.sln
 *.sw?
+
+# Local Google credentials must never enter the repository
+**/application_default_credentials.json
+**/service-account*.json

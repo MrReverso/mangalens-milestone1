@@ -1,8 +1,15 @@
 import { createServer } from "node:http";
-import { handleTranslationRequest } from "./translation-handler";
+import { createTranslationRequestHandler } from "./translation-handler";
+import { AdcGoogleAccessTokenProvider } from "./ocr/google-access-token-provider";
+import { GoogleVisionOcrProvider } from "./ocr/google-vision-ocr-provider";
 
 const PORT = 8787;
 const HOST = "127.0.0.1";
+const handleTranslationRequest = createTranslationRequestHandler({
+  ocrProvider: new GoogleVisionOcrProvider(
+    new AdcGoogleAccessTokenProvider()
+  ),
+});
 
 const server = createServer((req, res) => {
   const timestamp = new Date().toISOString();

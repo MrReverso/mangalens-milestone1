@@ -661,7 +661,7 @@ describe("TranslationCoordinator", () => {
     expect(keys).not.toContain("apiKey");
   });
 
-  it("returns timeout for local-demo and backend-timeout for development-api upon total deadline expiry", async () => {
+  it("returns timeout for local-demo and ocr-timeout for development-api upon total deadline expiry", async () => {
     vi.useFakeTimers();
     let resolveService!: (value: any) => void;
     const servicePromise = new Promise((resolve) => {
@@ -688,9 +688,38 @@ describe("TranslationCoordinator", () => {
     await vi.advanceTimersByTimeAsync(100);
     expect(await promiseDev).toEqual({
       success: false,
-      error: { code: "backend-timeout" },
+      error: { code: "ocr-timeout" },
     });
 
     resolveService({ contractVersion: 1, requestId: "request-1", pageId: "page-2", bubbles });
+  });
+
+  it.each([
+    "ocr-not-configured",
+    "ocr-auth-failed",
+    "ocr-unavailable",
+    "ocr-rate-limited",
+    "ocr-response-too-large",
+    "ocr-invalid-response",
+    "ocr-no-text",
+  ])("preserves safe development OCR error %s", async (code) => {
+    const localService = dependencies().services["local-demo"];
+    const coordinator = new TranslationCoordinator(dependencies({
+      services: {
+        "local-demo": localService,
+        "development-api": {
+          translate: vi.fn(async () => {
+            throw new Error(code);
+          }),
+        },
+      },
+    }));
+    expect(await coordinator.translate({
+      ...request,
+      serviceMode: "development-api",
+    })).toEqual({
+      success: false,
+      error: { code },
+    });
   });
 });

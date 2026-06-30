@@ -108,6 +108,8 @@ export default function App() {
   const [currentServiceMode, setCurrentServiceMode] =
     useState<TranslationServiceMode>("local-demo");
   const localTranslationTabId = useRef<number | null>(null);
+  const currentServiceModeRef =
+    useRef<TranslationServiceMode>("local-demo");
 
   // ── Load persisted settings on mount ─────────────────────────
   useEffect(() => {
@@ -124,11 +126,18 @@ export default function App() {
       if (!isTranslationPipelineProgressMessage(message) ||
           message.tabId !== localTranslationTabId.current) return;
       setLocalStage(message.stage);
-      const progressText: Record<TranslationPipelineStage, string> = {
-        capturing: "Capturing Page\u2026",
-        processing: "Processing Translation\u2026",
-        applying: "Applying Translation\u2026",
-      };
+      const isOcr = currentServiceModeRef.current === "development-api";
+      const progressText: Record<TranslationPipelineStage, string> = isOcr
+        ? {
+            capturing: "Capturing Page\u2026",
+            processing: "Processing OCR\u2026",
+            applying: "Applying OCR Preview\u2026",
+          }
+        : {
+            capturing: "Capturing Page\u2026",
+            processing: "Processing Translation\u2026",
+            applying: "Applying Translation\u2026",
+          };
       setStatus({ kind: "scanning", message: progressText[message.stage] });
     };
     chrome.runtime.onMessage.addListener(listener);
@@ -379,6 +388,7 @@ export default function App() {
   async function handleLocalTranslation(mode: TranslationServiceMode): Promise<void> {
     setIsLocalTranslating(true);
     setCurrentServiceMode(mode);
+    currentServiceModeRef.current = mode;
     setLocalStage("capturing");
     setStatus({ kind: "scanning", message: "Capturing Page\u2026" });
     try {
@@ -398,21 +408,37 @@ export default function App() {
         throw new Error("invalid-translation-response");
       }
       if (!rawResponse.success) {
+        const mappedMessage = translationPipelineErrorMessage(
+          rawResponse.error.code
+        );
         setStatus({
           kind: "error",
-          message: translationPipelineErrorMessage(rawResponse.error.code),
+          message: mode === "development-api" &&
+            mappedMessage === "Translation failed"
+            ? "OCR failed"
+            : mappedMessage,
         });
         return;
       }
       setHasTranslations(true);
-      const modeText = rawResponse.serviceMode === "local-demo" ? "Local demo" : "Dev API demo";
-      setStatus({
-        kind: "success",
-        message: `Translated Page ${rawResponse.pageNumber} \u00b7 ` +
-          `${rawResponse.bubbleCount} bubbles \u00b7 ${modeText}`,
-      });
+      if (rawResponse.serviceMode === "development-api") {
+        setStatus({
+          kind: "success",
+          message: `OCR detected ${rawResponse.bubbleCount} text regions ` +
+            "\u00b7 Translation not enabled",
+        });
+      } else {
+        setStatus({
+          kind: "success",
+          message: `Translated Page ${rawResponse.pageNumber} \u00b7 ` +
+            `${rawResponse.bubbleCount} bubbles \u00b7 Local demo`,
+        });
+      }
     } catch {
-      setStatus({ kind: "error", message: "Translation failed" });
+      setStatus({
+        kind: "error",
+        message: mode === "development-api" ? "OCR failed" : "Translation failed",
+      });
     } finally {
       localTranslationTabId.current = null;
       setIsLocalTranslating(false);
@@ -523,9 +549,9 @@ export default function App() {
               ? localStage === "capturing"
                 ? "Capturing\u2026"
                 : localStage === "processing"
-                  ? "Processing\u2026"
-                  : "Applying\u2026"
-              : "Translate via Dev API"}
+                  ? "Processing OCR\u2026"
+                  : "Applying OCR Preview\u2026"
+              : "OCR via Dev API"}
           </button>
         )}
 

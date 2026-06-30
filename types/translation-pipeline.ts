@@ -67,7 +67,15 @@ export type TranslationPipelineErrorCode =
   | "backend-response-too-large"
   | "backend-invalid-json"
   | "backend-invalid-response"
-  | "backend-timeout";
+  | "backend-timeout"
+  | "ocr-not-configured"
+  | "ocr-auth-failed"
+  | "ocr-unavailable"
+  | "ocr-rate-limited"
+  | "ocr-timeout"
+  | "ocr-response-too-large"
+  | "ocr-invalid-response"
+  | "ocr-no-text";
 
 export type BackgroundTranslationResponse =
   | {
@@ -123,6 +131,14 @@ const PIPELINE_ERRORS = new Set<string>([
   "backend-invalid-json",
   "backend-invalid-response",
   "backend-timeout",
+  "ocr-not-configured",
+  "ocr-auth-failed",
+  "ocr-unavailable",
+  "ocr-rate-limited",
+  "ocr-timeout",
+  "ocr-response-too-large",
+  "ocr-invalid-response",
+  "ocr-no-text",
 ]);
 
 export function isSourceLanguage(value: unknown): value is SourceLanguage {

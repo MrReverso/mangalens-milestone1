@@ -1,123 +1,145 @@
-# MangaLens — Milestone 4A: Secure Development Backend Transport
+# MangaLens — Milestone 4B: Google Vision OCR Preview
 
-MangaLens is a browser extension prototype for manga, manhwa, and webtoon translation experiences. Milestone 4A introduces a secure local loopback HTTP transport path connecting the background script to a zero-dependency development server.
+MangaLens is a Chrome Manifest V3 prototype for manga, manhwa, and webtoon
+translation experiences. Milestone 4B adds real paragraph-level OCR through a
+loopback development backend and Google Cloud Vision. It does not translate the
+detected text.
 
-## Current Milestone Features (Milestone 4A)
+## What Milestone 4B adds
 
-- **Development API Transport Mode**: Resolves requests via `HttpTranslationService` to a local loopback backend.
-- **Local Demo Mode**: Preserves in-extension mock translation processing using `LocalDeterministicTranslationService`.
-- **Exact Loopback Constraints**: Restricts the API to `http://127.0.0.1:8787/v1/translate` (health check at `/health`).
-- **Multipart Request Contract**: Packages request metadata (`metadata.json`) and the cropped PNG (`page.png`) into a single `multipart/form-data` request.
-- **Response stream safety**: Cancels the response stream safely via `reader.cancel()` if aborted or when the response exceeds 256 KB.
-- **Privacy boundaries**: PNG bytes are never logged, written to disk, or sent through Chrome messages.
+- **OCR via Dev API** captures one fully visible detected page and sends the
+  cropped PNG to the loopback backend.
+- The backend authenticates with Google Application Default Credentials (ADC)
+  and calls exactly
+  `https://vision.googleapis.com/v1/images:annotate`.
+- Google Vision runs only `DOCUMENT_TEXT_DETECTION`.
+- Paragraph symbols are reconstructed into text, and paragraph quadrilaterals
+  are normalized using MangaLens's trusted captured pixel dimensions.
+- Each valid paragraph becomes an editable MangaLens bubble with
+  `originalText` and `translatedText` both set to the detected OCR text.
+- Provider responses and errors are runtime-validated and reduced to safe,
+  allowlisted contracts before returning to the extension.
 
-## Current Limitations
+The popup explicitly reports **Translation not enabled** after a successful OCR
+preview.
 
-- **No OCR**: The extension does not perform text recognition.
-- **No AI**: The extension does not perform AI translation or layout analysis.
-- **No Real Translation**: The translation overlays display deterministic demo bubbles only.
-- **No Remote/Production Backend**: All requests remain restricted to loopback (localhost).
-- **No Auth or Billing**: No accounts, authentication, databases, or payment gateways exist.
+## Local demo versus OCR preview
 
----
+- **Translate Visible Page** uses the deterministic in-extension local demo. It
+  never contacts the development backend or Google.
+- **OCR via Dev API** sends the captured page through
+  `http://127.0.0.1:8787/v1/translate` to Google Vision and displays detected
+  text without translating it.
 
-## Running the Complete Development API Pipeline
+Both modes reuse the same capture coordinator, per-tab operation lock, total
+deadline, operation sequence, stale-result protection, content application,
+and editable overlay system. They cannot overlap in the same tab.
 
-### 1. Run the Mock Development Server
-In your terminal, execute:
+## Privacy boundary
+
+The PNG may travel only through:
+
+```text
+extension background
+→ http://127.0.0.1:8787/v1/translate
+→ https://vision.googleapis.com/v1/images:annotate
+```
+
+Images are sent to Google only after the user clicks **OCR via Dev API**.
+Captured images and OCR text are held temporarily in memory and are not written
+to disk, Chrome storage, a database, logs, analytics, or cache storage. Google
+access tokens remain inside the backend process and are never sent to the
+extension.
+
+Google Cloud Vision usage may incur charges under the selected Google Cloud
+project's billing account.
+
+## Google Cloud setup
+
+1. Create or select a Google Cloud project.
+2. Enable billing for that project.
+3. Enable the Cloud Vision API.
+4. Install and initialize the `gcloud` CLI.
+5. Create local Application Default Credentials:
+
+   ```bash
+   gcloud auth application-default login
+   ```
+
+6. If required, set the ADC quota project:
+
+   ```bash
+   gcloud auth application-default set-quota-project PROJECT_ID
+   ```
+
+7. Install dependencies and start the loopback backend:
+
+   ```bash
+   pnpm install --frozen-lockfile
+   pnpm dev:backend
+   ```
+
+8. In another terminal, start the extension:
+
+   ```bash
+   pnpm dev
+   ```
+
+9. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**,
+   and select `.output/chrome-mv3`.
+10. Open a page containing readable Japanese, Korean, Chinese, or other text.
+11. Click **Scan Manga Page** and make one detected page fully visible.
+12. Click **OCR via Dev API**.
+13. Confirm editable OCR regions appear and the popup says translation is not
+    enabled.
+
+The backend binds only to `127.0.0.1:8787`. `GET /health` reports the safe
+service contract and `ocrProvider: "google-vision"` without exposing credential
+or project information.
+
+## Development commands
+
 ```bash
+pnpm install --frozen-lockfile
+pnpm compile
+pnpm test
+pnpm build
 pnpm dev:backend
-```
-Expected output:
-```
-MangaLens development API listening on http://127.0.0.1:8787
-```
-
-### 2. Run the Extension Developer Mode
-In another terminal, execute:
-```bash
 pnpm dev
+pnpm fixture
 ```
 
-### 3. Load the Extension in Chrome
-1. Open Chrome and navigate to `chrome://extensions/`.
-2. Enable **Developer mode** (toggle in the top-right corner).
-3. Click **Load unpacked**.
-4. Select the `.output/chrome-mv3` directory inside the project folder.
+## Extension permissions
 
-### 4. Perform a Translation
-1. Navigate to a manga site or run the local fixture page via `pnpm fixture` (open `http://127.0.0.1:4173`).
-2. Click **Scan Manga Page**.
-3. Select a target language and click **Translate via Dev API**.
-4. Observe the progress states ("Capturing Page...", "Processing Translation...", "Applying Translation...").
-5. Observe the three editable translation bubbles applied dynamically.
-6. Stop the development server, run the action again, and verify the status: `Development translation server is not running`.
+Normal permissions remain exactly:
 
----
+- `storage`
+- `activeTab`
+- `scripting`
 
-## Project Structure
+Host permissions remain exactly:
 
-```
-mangalens/
-├── dev/
-│   └── backend/             # Development server entry, handlers, and multipart parsers
-│       ├── server.ts
-│       ├── translation-handler.ts
-│       └── multipart.ts
-├── entrypoints/
-│   ├── popup/
-│   │   ├── App.tsx          # Main popup React component
-│   │   ├── main.tsx         # Popup entry point
-│   │   ├── index.html       # Popup HTML shell
-│   │   └── style.css        # Popup styles
-│   ├── background.ts        # Capture and local-translation orchestration
-│   └── unlisted-content.ts  # Content script (injected programmatically)
-├── components/
-│   ├── LanguageSelect.tsx   # Reusable language dropdown component
-│   └── LanguageSelect.module.css
-├── lib/
-│   ├── image-detector.ts    # Manga image detection logic
-│   ├── image-position.ts    # Normalized-to-viewport coordinate mapping
-│   ├── capture/             # Eligibility, coordinator, cropper, geometry
-│   ├── translation/         # Local coordinator and translation service modes
-│   │   ├── http-translation-service.ts
-│   │   ├── local-deterministic-translation-service.ts
-│   │   ├── translation-coordinator.ts
-│   │   └── translation-pipeline-status.ts
-│   ├── mock-translation-provider.ts # Deterministic local mock results
-│   ├── overlay-manager.ts   # Numbered page marker management
-│   ├── scanner-controller.ts # Page sessions and scan/translation orchestration
-│   ├── translation-overlay-manager.ts # Mock speech-bubble rendering
-│   ├── translation-queue.ts # One-page-at-a-time processing
-│   ├── translation-text.ts  # Edit normalization and validation
-│   ├── messages.ts          # Typed message definitions
-│   └── storage.ts           # chrome.storage.local utility
-├── types/
-│   ├── extension.ts         # Shared extension types and constants
-│   ├── capture.ts           # Capture descriptors, metadata, and errors
-│   ├── translation-api.ts   # Validated multipart metadata contract
-│   ├── translation-pipeline.ts # Local pipeline messages and responses
-│   └── translation.ts       # Translation and normalized-coordinate models
-├── tests/
-│   └── *.test.ts            # Extension, client, coordinator, and server tests
-├── public/
-│   └── icon/                # Extension icons (16–128 px)
-├── wxt.config.ts            # WXT and manifest configuration
-├── vitest.config.ts         # Vitest configuration
-├── tsconfig.json            # TypeScript configuration (strict mode)
-└── package.json
-```
+- `http://127.0.0.1:8787/*`
 
----
+The extension has no permission for Google domains. `google-auth-library` and
+all Google provider files are development-backend-only and are not bundled into
+the Chrome output.
 
-## Safety and Privacy Boundaries
+## Current limitations
 
-- **Minimal Permissions**: Restricted to `storage`, `activeTab`, and `scripting`.
-- **Strict Host Permission**: Only `http://127.0.0.1:8787/*` is authorized.
-- **Image Safety**: Image bytes never cross extension message boundaries and are kept entirely in background script memory.
-- **Server Privacy**: The mock dev server never writes PNGs to disk, never logs payload structures, and never triggers external network calls.
+- OCR preview supports only one detected image fully visible in the viewport.
+- Pages taller or wider than the viewport are not stitched or automatically
+  scrolled.
+- OCR quality may vary on stylized manga lettering and low-resolution text.
+- Vertical text is not specially reordered.
+- Complex manga reading order is not inferred.
+- Paragraph rectangles are axis-aligned bounds around Google's quadrilaterals;
+  speech bubbles themselves are not detected.
+- OCR text is editable for the current tab session only.
+- No real translation, AI translation, inpainting, persistence, account,
+  billing, analytics, or production backend exists.
 
----
-
-## Recommended Next Milestone
-- **Milestone 4B**: OCR provider integration behind the development API.
+Milestone 4C should be a separate review of a real translation provider applied
+to validated OCR regions, including language behavior, provider privacy,
+cost controls, error handling, and explicit confirmation that OCR text—not
+image bytes—is the translation input.
