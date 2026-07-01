@@ -1,11 +1,20 @@
 version: '3.8'
 
 services:
-  ocr-benchmark:
+  ocr-paddle:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile.paddle
     volumes:
       - ./samples:/app/samples
       - ./results:/app/results
-    command: --input /app/samples --output /app/results --language ko
+    command: --input /app/samples --output /app/results --language ko --engines paddle
+
+  ocr-manga-translator:
+    build:
+      context: .
+      dockerfile: Dockerfile.manga-translator
+    volumes:
+      - ./samples:/app/samples
+      - ./results:/app/results
+    command: --input /app/samples --output /app/results --language ja --engines default,ctd,dbconvnext

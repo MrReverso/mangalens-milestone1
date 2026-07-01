@@ -1,9 +1,8 @@
 FROM python:3.10-slim
 
-# Install system dependencies for OpenCV and Git/PaddleOCR
+# Install system dependencies for OpenCV and PaddleOCR
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    git \
     libgl1-mesa-glx \
     libglib2.0-0 \
     libgomp1 \
@@ -14,11 +13,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Install pinned PaddleOCR dependencies
+RUN pip install --no-cache-dir \
+    "numpy<2.0.0" \
+    pillow \
+    psutil \
+    opencv-python-headless \
+    paddlepaddle==2.6.2 \
+    paddleocr==2.8.1
 
 # Copy benchmark source code
-COPY . .
+COPY benchmark.py .
+COPY test_smoke.py .
 
 ENTRYPOINT ["python", "benchmark.py"]

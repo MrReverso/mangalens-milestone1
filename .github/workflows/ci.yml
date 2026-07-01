@@ -20,3 +20,27 @@ jobs:
       - run: pnpm compile
       - run: pnpm test
       - run: pnpm build
+
+  ocr-benchmark-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "numpy<2.0.0" pillow psutil opencv-python-headless pytest
+          pip install paddlepaddle==2.6.2 paddleocr==2.8.1 --no-deps
+          pip install manga-ocr==0.1.14 --no-deps
+          pip install git+https://github.com/zyddnys/manga-image-translator.git@efdc229de8aa0f3d4051ad97664adc62dd5ac605 --no-deps
+      - name: Run syntax and import checks
+        run: |
+          python -m py_compile services/ocr-benchmark/benchmark.py
+          python -m py_compile services/ocr-benchmark/test_smoke.py
+      - name: Run smoke tests
+        run: |
+          cd services/ocr-benchmark
+          python3 test_smoke.py
