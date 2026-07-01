@@ -31,6 +31,7 @@ COPY patch_manga_package.py .
 RUN python patch_manga_package.py
 
 # Verify the patched OCR-only import closure individually
+RUN python -c "import manga_translator; print('package root OK')"
 RUN python -c "import manga_translator.config; print('config OK')"
 RUN python -c "import manga_translator.utils; print('utils OK')"
 RUN python -c "import manga_translator.detection; print('detection OK')"
