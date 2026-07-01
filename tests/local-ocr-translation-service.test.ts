@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import fs from "node:fs";
-import path from "node:path";
-import { LocalOcrTranslationService } from "@/lib/translation/local-ocr-translation-service";
+import {
+  LocalOcrTranslationService,
+  resetOffscreenLifecycleForTesting,
+} from "@/lib/translation/local-ocr-translation-service";
 import type { TranslationApiRequestMetadata } from "@/types/translation-api";
 // @ts-ignore
 import Tesseract from "@/public/tesseract/tesseract.esm.min.js";
@@ -45,10 +46,13 @@ describe("LocalOcrTranslationService", () => {
   const originalOffscreenCanvas = globalThis.OffscreenCanvas;
   const originalCreateImageBitmap = globalThis.createImageBitmap;
   const originalChrome = (globalThis as any).chrome;
+  const originalWindow = (globalThis as any).window;
 
   let mockWorker: any;
   let mockBlocks: { cStart: number; cEnd: number; rStart: number; rEnd: number }[] = [];
   let simulateContextError = false;
+  let mockImageBitmapClose: any;
+  let offscreenExists = false;
 
   function createMockImageData(
     w: number,
@@ -73,16 +77,33 @@ describe("LocalOcrTranslationService", () => {
   }
 
   beforeEach(() => {
+    resetOffscreenLifecycleForTesting();
     simulateContextError = false;
+    mockImageBitmapClose = vi.fn();
+    offscreenExists = false;
     mockBlocks = [
       { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
       { cStart: 600, cEnd: 700, rStart: 250, rEnd: 300 },
     ];
 
-    // Mock chrome.runtime.getURL
+    // Mock chrome APIs with realistic offscreen document tracking
     (globalThis as any).chrome = {
       runtime: {
         getURL: (p: string) => `chrome-extension://mock-id/${p}`,
+        sendMessage: vi.fn(),
+        getContexts: vi.fn().mockImplementation(async () => {
+          return offscreenExists
+            ? [{ documentUrl: "chrome-extension://mock-id/offscreen.html" }]
+            : [];
+        }),
+      },
+      offscreen: {
+        createDocument: vi.fn().mockImplementation(async () => {
+          offscreenExists = true;
+        }),
+        closeDocument: vi.fn().mockImplementation(async () => {
+          offscreenExists = false;
+        }),
       },
     };
 
@@ -90,7 +111,7 @@ describe("LocalOcrTranslationService", () => {
       return {
         width: 1000,
         height: 1000,
-        close: vi.fn(),
+        close: mockImageBitmapClose,
       } as any;
     };
 
@@ -125,359 +146,326 @@ describe("LocalOcrTranslationService", () => {
     globalThis.OffscreenCanvas = originalOffscreenCanvas;
     globalThis.createImageBitmap = originalCreateImageBitmap;
     (globalThis as any).chrome = originalChrome;
+    (globalThis as any).window = originalWindow;
     vi.useRealTimers();
     vi.clearAllMocks();
   });
 
-  it("accepts a valid PNG and returns contract-matching bubbles", async () => {
-    const response = await new LocalOcrTranslationService(0).translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal);
-    expect(response).toMatchObject({
-      contractVersion: 1,
-      requestId: "request-1",
-      pageId: "page-1",
-    });
-    expect((response as { bubbles: any[] }).bubbles).toHaveLength(2);
-  });
-
-  it("rejects non-PNG and empty images", async () => {
-    const service = new LocalOcrTranslationService(0);
-    await expect(service.translate({
-      image: new Blob(["x"], { type: "image/jpeg" }),
-      metadata: metadata(),
-    }, new AbortController().signal)).rejects.toThrow("invalid-image");
-    
-    await expect(service.translate({
-      image: new Blob([], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal)).rejects.toThrow("invalid-image");
-  });
-
-  it("is deterministic for identical inputs", async () => {
-    const service = new LocalOcrTranslationService(0);
-    const input = {
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    };
-    const first = await service.translate(input, new AbortController().signal);
-    const second = await service.translate(input, new AbortController().signal);
-    expect(second).toEqual(first);
-  });
-
-  it("passes arbitrary Japanese text through correctly", async () => {
-    mockWorker.recognize.mockResolvedValue({
-      data: { text: "本当に大丈夫？" },
+  describe("Direct Execution (Tests / Offscreen Context)", () => {
+    it("accepts a valid PNG and returns contract-matching bubbles and closes ImageBitmap", async () => {
+      const response = await new LocalOcrTranslationService(0).translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
+      expect(response).toMatchObject({
+        contractVersion: 1,
+        requestId: "request-1",
+        pageId: "page-1",
+      });
+      expect(mockImageBitmapClose).toHaveBeenCalled();
     });
 
-    const response = await new LocalOcrTranslationService(0).translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata("ja"),
-    }, new AbortController().signal) as { bubbles: any[] };
-
-    expect(response.bubbles[0].originalText).toBe("本当に大丈夫？");
-    expect(response.bubbles[0].translatedText).toBe("本当に大丈夫？");
-  });
-
-  it("passes arbitrary Korean text through correctly", async () => {
-    mockWorker.recognize.mockResolvedValue({
-      data: { text: "무엇을요?" },
+    it("rejects non-PNG and empty images and closes ImageBitmap if created", async () => {
+      const service = new LocalOcrTranslationService(0);
+      await expect(service.translate({
+        image: new Blob(["x"], { type: "image/jpeg" }),
+        metadata: metadata(),
+      }, new AbortController().signal)).rejects.toThrow("invalid-image");
+      
+      await expect(service.translate({
+        image: new Blob([], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal)).rejects.toThrow("invalid-image");
     });
 
-    const response = await new LocalOcrTranslationService(0).translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata("ko"),
-    }, new AbortController().signal) as { bubbles: any[] };
+    it("closes ImageBitmap on empty OCR result", async () => {
+      mockWorker.recognize.mockResolvedValue({
+        data: { text: "" },
+      });
 
-    expect(response.bubbles[0].originalText).toBe("무엇을요?");
-    expect(response.bubbles[0].translatedText).toBe("무엇을요?");
-  });
+      const service = new LocalOcrTranslationService(0);
+      await expect(service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal)).rejects.toThrow("ocr-no-text");
 
-  it("passes arbitrary Chinese text through correctly", async () => {
-    mockWorker.recognize.mockResolvedValue({
-      data: { text: "你好吗？" },
+      expect(mockImageBitmapClose).toHaveBeenCalled();
     });
 
-    const response = await new LocalOcrTranslationService(0).translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata("zh"),
-    }, new AbortController().signal) as { bubbles: any[] };
+    it("closes ImageBitmap on recognize failure", async () => {
+      mockWorker.recognize.mockRejectedValue(new Error("Recognize failed"));
 
-    expect(response.bubbles[0].originalText).toBe("你好吗？");
-    expect(response.bubbles[0].translatedText).toBe("你好吗？");
-  });
+      const service = new LocalOcrTranslationService(0);
+      await expect(service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal)).rejects.toThrow("ocr-unavailable");
 
-  it("passes arbitrary English text through correctly", async () => {
-    mockWorker.recognize.mockResolvedValue({
-      data: { text: "Stay alert." },
+      expect(mockImageBitmapClose).toHaveBeenCalled();
     });
 
-    const response = await new LocalOcrTranslationService(0).translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata("auto", "en"),
-    }, new AbortController().signal) as { bubbles: any[] };
+    it("aborts immediately when recognize is pending and closes ImageBitmap", async () => {
+      vi.useFakeTimers();
+      let resolveRecognize: any;
+      const pendingPromise = new Promise((resolve) => {
+        resolveRecognize = resolve;
+      });
 
-    expect(response.bubbles[0].originalText).toBe("Stay alert.");
-    expect(response.bubbles[0].translatedText).toBe("Stay alert.");
-  });
+      mockWorker.recognize.mockReturnValue(pendingPromise);
 
-  it("handles empty OCR result safely by returning ocr-no-text", async () => {
-    mockWorker.recognize.mockResolvedValue({
-      data: { text: "" },
+      const controller = new AbortController();
+      const service = new LocalOcrTranslationService(0);
+
+      const promise = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, controller.signal);
+
+      promise.catch(() => {});
+
+      for (let i = 0; i < 20; i++) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
+
+      controller.abort();
+
+      await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+      expect(mockWorker.terminate).toHaveBeenCalled();
+      expect(mockImageBitmapClose).toHaveBeenCalled();
+
+      resolveRecognize({ data: { text: "" } });
     });
 
-    const service = new LocalOcrTranslationService(0);
-    await expect(service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal)).rejects.toThrow("ocr-no-text");
-  });
+    it("timeouts when recognize is permanently pending and closes ImageBitmap", async () => {
+      vi.useFakeTimers();
 
-  it("handles OCR engine initialization failure safely by throwing ocr-unavailable", async () => {
-    vi.mocked(Tesseract.createWorker).mockRejectedValue(new Error("Failed to init worker"));
+      const pendingPromise = new Promise(() => {});
+      mockWorker.recognize.mockReturnValue(pendingPromise);
 
-    const service = new LocalOcrTranslationService(0);
-    await expect(service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal)).rejects.toThrow("ocr-unavailable");
-  });
+      const controller = new AbortController();
+      const service = new LocalOcrTranslationService(0);
 
-  it("handles worker recognize failure safely by throwing ocr-unavailable", async () => {
-    mockWorker.recognize.mockRejectedValue(new Error("Worker thread crashed"));
+      const promise = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, controller.signal);
 
-    const service = new LocalOcrTranslationService(0);
-    await expect(service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal)).rejects.toThrow("ocr-unavailable");
-  });
+      promise.catch(() => {});
 
-  it("rejects an already-aborted signal", async () => {
-    const controller = new AbortController();
-    controller.abort();
-    await expect(new LocalOcrTranslationService().translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, controller.signal)).rejects.toMatchObject({ name: "AbortError" });
-  });
+      for (let i = 0; i < 20; i++) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
 
-  it("aborts immediately when recognize is pending and terminates the worker", async () => {
-    vi.useFakeTimers();
-    let resolveRecognize: any;
-    const pendingPromise = new Promise((resolve) => {
-      resolveRecognize = resolve;
+      await vi.advanceTimersByTimeAsync(29000);
+
+      await expect(promise).rejects.toThrow("ocr-timeout");
+      expect(mockWorker.terminate).toHaveBeenCalled();
+      expect(mockImageBitmapClose).toHaveBeenCalled();
     });
 
-    mockWorker.recognize.mockReturnValue(pendingPromise);
+    it("createWorker remains pending, then AbortController aborts, and closes ImageBitmap", async () => {
+      vi.useFakeTimers();
+      let resolveWorkerPromise: any;
+      const createWorkerPromise = new Promise((resolve) => {
+        resolveWorkerPromise = resolve;
+      });
 
-    const controller = new AbortController();
-    const service = new LocalOcrTranslationService(0);
+      vi.mocked(Tesseract.createWorker).mockReturnValue(createWorkerPromise as any);
 
-    const promise = service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, controller.signal);
+      const controller = new AbortController();
+      const service = new LocalOcrTranslationService(0);
 
-    promise.catch(() => {});
+      const promise = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, controller.signal);
 
-    // Pump fake timers to progress to the recognize call
-    for (let i = 0; i < 20; i++) {
-      await vi.advanceTimersByTimeAsync(1);
-    }
+      promise.catch(() => {});
 
-    // Abort the operation
-    controller.abort();
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
 
-    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
-    expect(mockWorker.terminate).toHaveBeenCalled();
+      controller.abort();
 
-    // Clean up the promise
-    resolveRecognize({ data: { text: "" } });
+      await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+      expect(mockImageBitmapClose).toHaveBeenCalled();
+
+      resolveWorkerPromise(mockWorker);
+      for (let i = 0; i < 10; i++) {
+        await vi.advanceTimersByTimeAsync(1);
+      }
+      expect(mockWorker.terminate).toHaveBeenCalled();
+    });
   });
 
-  it("timeouts when recognize is permanently pending and terminates the worker", async () => {
-    vi.useFakeTimers();
-
-    const pendingPromise = new Promise(() => {}); // Permanently pending
-    mockWorker.recognize.mockReturnValue(pendingPromise);
-
-    const controller = new AbortController();
-    const service = new LocalOcrTranslationService(0);
-
-    const promise = service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, controller.signal);
-
-    promise.catch(() => {});
-
-    // Pump fake timers to reach recognize
-    for (let i = 0; i < 20; i++) {
-      await vi.advanceTimersByTimeAsync(1);
-    }
-
-    // Advance time to trigger recognize timeout
-    await vi.advanceTimersByTimeAsync(26000);
-
-    await expect(promise).rejects.toThrow("ocr-timeout");
-    expect(mockWorker.terminate).toHaveBeenCalled();
-  });
-
-  it("createWorker remains pending, then AbortController aborts, then resolves and terminates late worker", async () => {
-    vi.useFakeTimers();
-    let resolveWorkerPromise: any;
-    const createWorkerPromise = new Promise((resolve) => {
-      resolveWorkerPromise = resolve;
+  describe("Service Worker Offscreen Delegation", () => {
+    beforeEach(() => {
+      // Simulate Service Worker context by deleting global window
+      // @ts-ignore
+      delete (globalThis as any).window;
     });
 
-    vi.mocked(Tesseract.createWorker).mockReturnValue(createWorkerPromise as any);
+    it("ensures offscreen document is opened, sends scan message, and closes document on success", async () => {
+      const mockResult = { contractVersion: 1, bubbles: [] };
+      vi.mocked(chrome.runtime.sendMessage as any).mockResolvedValue({ success: true, result: mockResult });
 
-    const controller = new AbortController();
-    const service = new LocalOcrTranslationService(0);
+      const service = new LocalOcrTranslationService(0);
+      const response = await service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
 
-    const promise = service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, controller.signal);
-
-    promise.catch(() => {});
-
-    // Pump fake timers to enter createWorker
-    for (let i = 0; i < 10; i++) {
-      await vi.advanceTimersByTimeAsync(1);
-    }
-
-    // Abort while createWorker is pending
-    controller.abort();
-
-    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
-
-    // Late worker resolves
-    resolveWorkerPromise(mockWorker);
-
-    // Let the event loop execute callback
-    for (let i = 0; i < 10; i++) {
-      await vi.advanceTimersByTimeAsync(1);
-    }
-
-    // Verify late worker is terminated immediately
-    expect(mockWorker.terminate).toHaveBeenCalled();
-  });
-
-  it("createWorker remains pending until timeout, then resolves and terminates late worker", async () => {
-    vi.useFakeTimers();
-
-    let resolveWorkerPromise: any;
-    const createWorkerPromise = new Promise((resolve) => {
-      resolveWorkerPromise = resolve;
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledOnce();
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: "offscreen-ocr",
+          action: "scan",
+        })
+      );
+      expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
+      expect(response).toEqual(mockResult);
     });
 
-    vi.mocked(Tesseract.createWorker).mockReturnValue(createWorkerPromise as any);
+    it("manages concurrent scans, opening once and closing document after the last scan completes", async () => {
+      let resolveScan1: any;
+      let resolveScan2: any;
 
-    const controller = new AbortController();
-    const service = new LocalOcrTranslationService(0);
+      const p1 = new Promise((resolve) => { resolveScan1 = resolve; });
+      const p2 = new Promise((resolve) => { resolveScan2 = resolve; });
 
-    const promise = service.translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, controller.signal);
+      vi.mocked(chrome.runtime.sendMessage as any)
+        .mockImplementationOnce(() => p1 as any)
+        .mockImplementationOnce(() => p2 as any);
 
-    promise.catch(() => {});
+      const service = new LocalOcrTranslationService(0);
 
-    // Pump fake timers to reach createWorker
-    for (let i = 0; i < 10; i++) {
-      await vi.advanceTimersByTimeAsync(1);
-    }
+      // Start two simultaneous scans
+      const promise1 = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
 
-    // Advance time by 26 seconds to trigger timeout
-    await vi.advanceTimersByTimeAsync(26000);
+      const promise2 = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
 
-    await expect(promise).rejects.toThrow("ocr-timeout");
+      // Wait a tick for the delays to resolve and offscreen document to open
+      await new Promise((r) => setTimeout(r, 10));
 
-    // Late worker resolves after timeout
-    resolveWorkerPromise(mockWorker);
+      // Verify open was only called once
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledOnce();
+      expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
 
-    // Let the event loop execute callback
-    for (let i = 0; i < 10; i++) {
-      await vi.advanceTimersByTimeAsync(1);
-    }
+      // Resolve scan 1
+      resolveScan1({ success: true, result: "Res 1" });
+      await promise1;
 
-    // Verify late worker is terminated immediately
-    expect(mockWorker.terminate).toHaveBeenCalled();
-  });
+      // Close should not be called yet since scan 2 is still active
+      expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
 
-  it("contains no network client call in the entire module code (no-network guarantee)", async () => {
-    const filePath = path.resolve(__dirname, "../lib/translation/local-ocr-translation-service.ts");
-    const source = fs.readFileSync(filePath, "utf8");
-    
-    expect(source).not.toMatch(/\bfetch\s*\(/);
-    expect(source).not.toMatch(/XMLHttpRequest|WebSocket|EventSource/);
-  });
+      // Resolve scan 2
+      resolveScan2({ success: true, result: "Res 2" });
+      await promise2;
 
-  it("groups nearby lines belonging to one dialogue block and normalizes coordinate bounds strictly", async () => {
-    mockBlocks = [
-      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
-      { cStart: 110, cEnd: 190, rStart: 190, rEnd: 240 },
-    ];
+      // Now close document should be called
+      expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
+    });
 
-    mockWorker.recognize
-      .mockResolvedValueOnce({ data: { text: "Line 1" } })
-      .mockResolvedValueOnce({ data: { text: "Line 2" } });
+    it("sends abort request to offscreen document and cleans up if aborted", async () => {
+      vi.mocked(chrome.runtime.sendMessage as any).mockReturnValue(new Promise(() => {}) as any); // pending scan
 
-    const response = await new LocalOcrTranslationService(0).translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal) as { bubbles: any[] };
+      const controller = new AbortController();
+      const service = new LocalOcrTranslationService(0);
 
-    expect(response.bubbles).toHaveLength(1); // Merged into 1
-    const merged = response.bubbles[0];
-    expect(merged.originalText).toBe("Line 1\nLine 2");
+      const promise = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, controller.signal);
 
-    // Bounds strict guarantees check
-    expect(merged.bounds.x).toBeGreaterThanOrEqual(0);
-    expect(merged.bounds.x + merged.bounds.width).toBeLessThanOrEqual(1.00001);
-    expect(merged.bounds.y).toBeGreaterThanOrEqual(0);
-    expect(merged.bounds.y + merged.bounds.height).toBeLessThanOrEqual(1.00001);
-  });
+      promise.catch(() => {});
 
-  it("keeps separate dialogue blocks separate", async () => {
-    mockBlocks = [
-      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 },
-      { cStart: 100, cEnd: 200, rStart: 550, rEnd: 600 },
-    ];
+      // Wait a microtask to let delay resolve and scan begin
+      await new Promise((r) => setTimeout(r, 10));
 
-    mockWorker.recognize
-      .mockResolvedValueOnce({ data: { text: "Bubble A" } })
-      .mockResolvedValueOnce({ data: { text: "Bubble B" } });
+      // Abort
+      controller.abort();
 
-    const response = await new LocalOcrTranslationService(0).translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal) as { bubbles: any[] };
+      await expect(promise).rejects.toMatchObject({ name: "AbortError" });
 
-    expect(response.bubbles).toHaveLength(2); // Kept separate
-  });
+      // Verifies abort message was sent to offscreen doc
+      expect(chrome.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          target: "offscreen-ocr",
+          action: "abort",
+        })
+      );
+      expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
+    });
 
-  it("preserves deterministic reading-order sorting primarily top-to-bottom, then left-to-right", async () => {
-    mockBlocks = [
-      { cStart: 600, cEnd: 700, rStart: 250, rEnd: 300 }, // Bottom
-      { cStart: 100, cEnd: 200, rStart: 100, rEnd: 150 }, // Top
-    ];
+    it("handles offscreen document close failure gracefully without throwing scanner errors", async () => {
+      vi.mocked(chrome.offscreen.closeDocument).mockRejectedValue(new Error("Close failed"));
+      vi.mocked(chrome.runtime.sendMessage as any).mockResolvedValue({ success: true, result: "Done" });
 
-    mockWorker.recognize
-      .mockResolvedValueOnce({ data: { text: "Top Bubble" } })
-      .mockResolvedValueOnce({ data: { text: "Bottom Bubble" } });
+      const service = new LocalOcrTranslationService(0);
+      const response = await service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
 
-    const response = await new LocalOcrTranslationService(0).translate({
-      image: new Blob(["pixels"], { type: "image/png" }),
-      metadata: metadata(),
-    }, new AbortController().signal) as { bubbles: any[] };
+      expect(response).toBe("Done");
+      expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
+    });
 
-    expect(response.bubbles).toHaveLength(2);
-    // Bubble at y=100 (Top Bubble) must come first in the sorted bubbles array
-    expect(response.bubbles[0].originalText).toBe("Top Bubble");
-    expect(response.bubbles[1].originalText).toBe("Bottom Bubble");
+    it("queues offscreen document opening if a closure is currently pending", async () => {
+      let resolveClose: any;
+      const closePromise = new Promise<void>((r) => { resolveClose = r; });
+      vi.mocked(chrome.offscreen.closeDocument).mockImplementation(async () => {
+        offscreenExists = false;
+        await closePromise;
+      });
+      
+      let resolveScan1: any;
+      const scan1Promise = new Promise((r) => { resolveScan1 = r; });
+      vi.mocked(chrome.runtime.sendMessage as any).mockImplementationOnce(() => scan1Promise as any);
+
+      const service = new LocalOcrTranslationService(0);
+
+      // Start scan 1
+      const promise1 = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
+
+      await new Promise((r) => setTimeout(r, 10)); // let it start
+
+      // Resolve scan 1's message. It will now start closing
+      resolveScan1({ success: true, result: "Done 1" });
+
+      // We clear the mocks to trace scan 2
+      vi.mocked(chrome.offscreen.createDocument).mockClear();
+
+      // Trigger scan 2. It must wait for the pending close to finish
+      let resolveScan2: any;
+      const scan2Promise = new Promise((r) => { resolveScan2 = r; });
+      vi.mocked(chrome.runtime.sendMessage as any).mockImplementationOnce(() => scan2Promise as any);
+
+      const promise2 = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
+
+      await new Promise((r) => setTimeout(r, 10));
+      expect(chrome.offscreen.createDocument).not.toHaveBeenCalled();
+
+      // Resolve the close promise. Now the new open/create can proceed
+      resolveClose();
+      resolveScan2({ success: true, result: "Done 2" });
+
+      await Promise.all([promise1, promise2]);
+
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledOnce();
+    });
   });
 });

@@ -223,21 +223,67 @@ function groupTextRegions(
   return current;
 }
 
-async function ensureOffscreenDocument(): Promise<void> {
-  if (typeof chrome.runtime.getContexts === 'function') {
-    const contexts = await chrome.runtime.getContexts({
-      contextTypes: ['OFFSCREEN_DOCUMENT' as any]
-    });
-    if (contexts.length > 0) {
-      return;
-    }
+let activeScansCount = 0;
+let isClosing = false;
+let offscreenClosePromise: Promise<void> | null = null;
+let offscreenCreationPromise: Promise<void> | null = null;
+
+async function registerScanStart(): Promise<void> {
+  if (isClosing && offscreenClosePromise) {
+    await offscreenClosePromise;
   }
-  
-  await chrome.offscreen.createDocument({
-    url: 'offscreen.html',
-    reasons: ['WORKERS' as any],
-    justification: 'Run local Tesseract OCR in a dedicated worker.'
-  });
+  activeScansCount++;
+  await ensureOffscreenDocument();
+}
+
+async function registerScanEnd(): Promise<void> {
+  activeScansCount--;
+  if (activeScansCount <= 0) {
+    activeScansCount = 0;
+    isClosing = true;
+    offscreenClosePromise = (async () => {
+      try {
+        await chrome.offscreen.closeDocument();
+      } catch (err) {
+        console.error("Failed to close offscreen document:", err);
+      } finally {
+        isClosing = false;
+        offscreenClosePromise = null;
+      }
+    })();
+    await offscreenClosePromise;
+  }
+}
+
+async function ensureOffscreenDocument(): Promise<void> {
+  if (offscreenCreationPromise) {
+    return offscreenCreationPromise;
+  }
+
+  offscreenCreationPromise = (async () => {
+    const offscreenUrl = 'offscreen.html';
+    if (typeof chrome.runtime.getContexts === 'function') {
+      const contexts = await chrome.runtime.getContexts({
+        contextTypes: ['OFFSCREEN_DOCUMENT' as any]
+      });
+      const exists = contexts.some((c) => c.documentUrl?.endsWith(offscreenUrl));
+      if (exists) {
+        return;
+      }
+    }
+    
+    await chrome.offscreen.createDocument({
+      url: offscreenUrl,
+      reasons: ['WORKERS' as any],
+      justification: 'Run local Tesseract OCR in a dedicated worker.'
+    });
+  })();
+
+  try {
+    await offscreenCreationPromise;
+  } finally {
+    offscreenCreationPromise = null;
+  }
 }
 
 async function runWithAbortAndTimeout<T>(
@@ -323,6 +369,14 @@ implements TranslationService {
       throw new DOMException("Local translation cancelled", "AbortError");
     }
 
+    const startTimestamp = Date.now();
+    const totalDeadlineMs = 28000;
+    const deadlineTimestamp = startTimestamp + totalDeadlineMs;
+
+    const getRemainingTime = () => {
+      return Math.max(0, deadlineTimestamp - Date.now());
+    };
+
     const isServiceWorker =
       typeof chrome !== 'undefined' &&
       typeof chrome.offscreen !== 'undefined' &&
@@ -339,7 +393,7 @@ implements TranslationService {
       const base64 = btoa(binary);
       const dataUrl = `data:${input.image.type};base64,${base64}`;
 
-      await ensureOffscreenDocument();
+      await registerScanStart();
 
       let onAbort: () => void;
       let timer: any;
@@ -369,7 +423,7 @@ implements TranslationService {
             requestId: metadata.requestId,
           }).catch(() => {});
           reject(new Error("ocr-timeout"));
-        }, 25000);
+        }, getRemainingTime());
       });
 
       const scanPromise = (async () => {
@@ -393,6 +447,7 @@ implements TranslationService {
       } finally {
         signal.removeEventListener("abort", onAbort!);
         clearTimeout(timer);
+        await registerScanEnd();
       }
     }
 
@@ -432,7 +487,7 @@ implements TranslationService {
 
       const tessLangs = mapLanguage(metadata.sourceLanguage);
 
-      // Create worker using the wrapper
+      // Create worker using the wrapper with remaining time
       try {
         await runWithAbortAndTimeout(
           async () => {
@@ -447,7 +502,7 @@ implements TranslationService {
             return w;
           },
           signal,
-          25000,
+          getRemainingTime(),
           workerRef
         );
       } catch (err: any) {
@@ -498,7 +553,7 @@ implements TranslationService {
               return await workerRef.worker.recognize(cropBlob);
             },
             signal,
-            25000,
+            getRemainingTime(),
             workerRef
           );
         } catch (err: any) {
@@ -571,6 +626,9 @@ implements TranslationService {
         bubbles: sortedBubbles,
       };
     } finally {
+      if (imageBitmap && typeof imageBitmap.close === "function") {
+        imageBitmap.close();
+      }
       if (workerRef.worker) {
         await workerRef.worker.terminate().catch(() => {});
       }
@@ -604,4 +662,11 @@ function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
     timer = setTimeout(onComplete, ms);
     if (signal.aborted) onAbort();
   });
+}
+
+export function resetOffscreenLifecycleForTesting() {
+  activeScansCount = 0;
+  isClosing = false;
+  offscreenClosePromise = null;
+  offscreenCreationPromise = null;
 }

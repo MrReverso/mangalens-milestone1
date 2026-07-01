@@ -47,7 +47,7 @@ function isBackendErrorCode(code: string): boolean {
   return BACKEND_ERRORS.has(code);
 }
 
-const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 30_000;
 const DEFAULT_RETIREMENT_TIMEOUT_MS = 5_000;
 
 interface TranslationOperation {
