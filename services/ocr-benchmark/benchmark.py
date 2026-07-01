@@ -12,7 +12,82 @@ import importlib.metadata
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any, Tuple, Optional
 
-# Attempt imports for deep learning and OCR libraries
+# Diagnostic variables for capturing exact import errors and tracebacks
+MANGA_CONFIG_IMPORT_ERROR = None
+MANGA_CONFIG_TRACEBACK = None
+try:
+    from manga_translator.config import Detector, Ocr, DetectorConfig, OcrConfig
+except Exception as e:
+    MANGA_CONFIG_IMPORT_ERROR = repr(e)
+    MANGA_CONFIG_TRACEBACK = traceback.format_exc()
+    Detector = None
+    Ocr = None
+    DetectorConfig = None
+    OcrConfig = None
+
+MANGA_DETECTION_IMPORT_ERROR = None
+MANGA_DETECTION_TRACEBACK = None
+try:
+    from manga_translator.detection import dispatch as dispatch_detection, DETECTORS
+except Exception as e:
+    MANGA_DETECTION_IMPORT_ERROR = repr(e)
+    MANGA_DETECTION_TRACEBACK = traceback.format_exc()
+    dispatch_detection = None
+    DETECTORS = {}
+
+MANGA_OCR_IMPORT_ERROR = None
+MANGA_OCR_TRACEBACK = None
+try:
+    from manga_translator.ocr import dispatch as dispatch_ocr, OCRS
+except Exception as e:
+    MANGA_OCR_IMPORT_ERROR = repr(e)
+    MANGA_OCR_TRACEBACK = traceback.format_exc()
+    dispatch_ocr = None
+    OCRS = {}
+
+MANGA_UTILS_IMPORT_ERROR = None
+MANGA_UTILS_TRACEBACK = None
+try:
+    from manga_translator.utils import Quadrilateral
+except Exception as e:
+    MANGA_UTILS_IMPORT_ERROR = repr(e)
+    MANGA_UTILS_TRACEBACK = traceback.format_exc()
+    Quadrilateral = None
+
+PADDLE_IMPORT_ERROR = None
+PADDLE_TRACEBACK = None
+try:
+    import paddle
+except Exception as e:
+    PADDLE_IMPORT_ERROR = repr(e)
+    PADDLE_TRACEBACK = traceback.format_exc()
+
+PADDLEOCR_IMPORT_ERROR = None
+PADDLEOCR_TRACEBACK = None
+try:
+    from paddleocr import PaddleOCR
+except Exception as e:
+    PADDLEOCR_IMPORT_ERROR = repr(e)
+    PADDLEOCR_TRACEBACK = traceback.format_exc()
+    PaddleOCR = None
+
+MANGA_OCR_LIB_IMPORT_ERROR = None
+MANGA_OCR_LIB_TRACEBACK = None
+try:
+    import manga_ocr
+except Exception as e:
+    MANGA_OCR_LIB_IMPORT_ERROR = repr(e)
+    MANGA_OCR_LIB_TRACEBACK = traceback.format_exc()
+    manga_ocr = None
+
+HAS_MANGA_TRANSLATOR = (
+    MANGA_CONFIG_IMPORT_ERROR is None and
+    MANGA_DETECTION_IMPORT_ERROR is None and
+    MANGA_OCR_IMPORT_ERROR is None and
+    MANGA_UTILS_IMPORT_ERROR is None
+)
+
+# Attempt imports for Pillow and OpenCV
 try:
     import cv2
     import numpy as np
@@ -33,35 +108,6 @@ try:
     import psutil
 except ImportError:
     psutil = None
-
-try:
-    from paddleocr import PaddleOCR
-except ImportError:
-    PaddleOCR = None
-
-try:
-    import manga_ocr
-except ImportError:
-    manga_ocr = None
-
-# Attempt manga-image-translator imports
-try:
-    from manga_translator.config import Detector, Ocr, DetectorConfig, OcrConfig
-    from manga_translator.detection import dispatch as dispatch_detection, DETECTORS
-    from manga_translator.ocr import dispatch as dispatch_ocr, OCRS
-    from manga_translator.utils import Quadrilateral
-    HAS_MANGA_TRANSLATOR = True
-except ImportError:
-    Detector = None
-    Ocr = None
-    DetectorConfig = None
-    OcrConfig = None
-    dispatch_detection = None
-    dispatch_ocr = None
-    Quadrilateral = None
-    DETECTORS = {}
-    OCRS = {}
-    HAS_MANGA_TRANSLATOR = False
 
 
 # Caching recognizer engines to avoid re-initialization overhead
@@ -113,6 +159,75 @@ def parse_paddle_rec_result(res) -> Tuple[str, float]:
     except Exception:
         pass
     return "", 0.0
+
+
+def recognize_detected_regions_with_paddle(
+    image: np.ndarray,
+    detected_regions: List[Any],
+    language: str,
+    paddle_recognizer: Any,
+    detector_name: str,
+    version_str: str
+) -> List[Dict[str, Any]]:
+    """
+    Testable hybrid helper: crops or warps each region, runs PaddleOCR recognition-only,
+    and maps the recognized text back, preserving original detector polygon coordinates.
+    """
+    regions_result = []
+    
+    for idx, r in enumerate(detected_regions):
+        crop_success = False
+        crop_img = None
+        try:
+            # 1. Perspective warp crop
+            crop_img = r.get_transformed_region(image, r.direction, 48)
+            crop_success = True
+        except Exception:
+            # 2. Axis-aligned bounding box fallback
+            try:
+                x, y, w, h = int(r.aabb.x), int(r.aabb.y), int(r.aabb.w), int(r.aabb.h)
+                x = max(0, min(x, image.shape[1] - 1))
+                y = max(0, min(y, image.shape[0] - 1))
+                w = max(1, min(w, image.shape[1] - x))
+                h = max(1, min(h, image.shape[0] - y))
+                crop_img = image[y:y+h, x:x+w]
+                crop_success = True
+            except Exception as e:
+                print(f"Warning: AABB crop fallback failed: {e}")
+        
+        if not crop_success or crop_img is None or crop_img.size == 0:
+            continue
+
+        try:
+            res_ocr = paddle_recognizer.ocr(crop_img, det=False, rec=True)
+            text, conf = parse_paddle_rec_result(res_ocr)
+        except Exception as e:
+            print(f"Warning: Standalone recognition failed: {e}")
+            text, conf = "", 0.0
+
+        if not text or not text.strip():
+            continue
+
+        pts = [{"x": float(p[0]), "y": float(p[1])} for p in r.pts]
+        x_aabb = int(r.aabb.x)
+        y_aabb = int(r.aabb.y)
+        w_aabb = int(r.aabb.w)
+        h_aabb = int(r.aabb.h)
+
+        regions_result.append({
+            "id": f"region_{idx + 1}",
+            "polygon": {"points": pts},
+            "boundingBox": {"x": x_aabb, "y": y_aabb, "width": w_aabb, "height": h_aabb},
+            "text": text.strip(),
+            "confidence": conf,
+            "orientation": r.direction if getattr(r, "direction", None) in ["horizontal", "vertical", "unknown"] else "unknown",
+            "detector": detector_name,
+            "recognizer": f"paddleocr-{language}",
+            "detectorVersion": version_str,
+            "recognizerVersion": get_package_version("paddleocr")
+        })
+        
+    return regions_result
 
 
 class OcrEngine(ABC):
@@ -188,6 +303,19 @@ def get_optimal_device() -> str:
 
 
 def check_engines(engines_str: str):
+    print("=== SYSTEM DIAGNOSTICS ===")
+    try:
+        print(f"Python version: {sys.version}")
+        subprocess.run([sys.executable, "-m", "pip", "--version"])
+        for pkg in ["paddlepaddle", "paddleocr", "manga-ocr", "manga-image-translator"]:
+            print(f"\n--- pip show {pkg} ---")
+            subprocess.run([sys.executable, "-m", "pip", "show", pkg])
+        print("\n--- pip check ---")
+        subprocess.run([sys.executable, "-m", "pip", "check"])
+    except Exception as e:
+        print(f"Failed to run diagnostics commands: {e}")
+    print("==========================\n")
+
     print("=== STARTING STRICT ENGINE INSTALLATION CHECKS ===")
     requested = [e.strip() for e in engines_str.split(",")]
     
@@ -196,43 +324,77 @@ def check_engines(engines_str: str):
     for req in requested:
         if req == "paddle":
             print("Checking Standalone PaddleOCR requirements...")
-            try:
-                import paddle
-                print(f"  ✓ paddlepaddle imported successfully. Version: {get_package_version('paddlepaddle')}")
-            except ImportError as e:
-                print(f"  ✗ Failed to import paddlepaddle: {e}")
-                missing_deps.append("paddlepaddle")
-            try:
-                import paddleocr
-                print(f"  ✓ paddleocr imported successfully. Version: {get_package_version('paddleocr')}")
-            except ImportError as e:
-                print(f"  ✗ Failed to import paddleocr: {e}")
+            if PADDLE_IMPORT_ERROR:
+                print(f"  ✗ Failed to import paddle: {PADDLE_IMPORT_ERROR}")
+                print(PADDLE_TRACEBACK)
+                missing_deps.append("paddle")
+            else:
+                print("  ✓ paddle imported successfully.")
+                
+            if PADDLEOCR_IMPORT_ERROR:
+                print(f"  ✗ Failed to import paddleocr: {PADDLEOCR_IMPORT_ERROR}")
+                print(PADDLEOCR_TRACEBACK)
                 missing_deps.append("paddleocr")
+            else:
+                print("  ✓ paddleocr imported successfully.")
                 
         elif req in ["ctd", "dbconvnext", "default"]:
             print(f"Checking manga-image-translator ({req}) requirements...")
-            if not HAS_MANGA_TRANSLATOR:
-                print("  ✗ Failed to import manga_translator package.")
-                missing_deps.append("manga-image-translator")
+            
+            if MANGA_CONFIG_IMPORT_ERROR:
+                print(f"  ✗ Failed to import manga_translator.config: {MANGA_CONFIG_IMPORT_ERROR}")
+                print(MANGA_CONFIG_TRACEBACK)
+                missing_deps.append("manga_translator.config")
             else:
-                print(f"  ✓ manga_translator imported successfully. Version: {get_package_version('manga-image-translator')}")
+                print("  ✓ manga_translator.config imported successfully.")
+
+            if MANGA_DETECTION_IMPORT_ERROR:
+                print(f"  ✗ Failed to import manga_translator.detection: {MANGA_DETECTION_IMPORT_ERROR}")
+                print(MANGA_DETECTION_TRACEBACK)
+                missing_deps.append("manga_translator.detection")
+            else:
+                print("  ✓ manga_translator.detection imported successfully.")
+
+            if MANGA_OCR_IMPORT_ERROR:
+                print(f"  ✗ Failed to import manga_translator.ocr: {MANGA_OCR_IMPORT_ERROR}")
+                print(MANGA_OCR_TRACEBACK)
+                missing_deps.append("manga_translator.ocr")
+            else:
+                print("  ✓ manga_translator.ocr imported successfully.")
+
+            if MANGA_UTILS_IMPORT_ERROR:
+                print(f"  ✗ Failed to import manga_translator.utils: {MANGA_UTILS_IMPORT_ERROR}")
+                print(MANGA_UTILS_TRACEBACK)
+                missing_deps.append("manga_translator.utils")
+            else:
+                print("  ✓ manga_translator.utils imported successfully.")
+
+            if MANGA_OCR_LIB_IMPORT_ERROR:
+                print(f"  ✗ Failed to import manga-ocr library: {MANGA_OCR_LIB_IMPORT_ERROR}")
+                print(MANGA_OCR_LIB_TRACEBACK)
+                missing_deps.append("manga-ocr")
+            else:
+                print("  ✓ manga-ocr library imported successfully.")
+
+            # Registry entries checks
+            if not MANGA_CONFIG_IMPORT_ERROR and not MANGA_DETECTION_IMPORT_ERROR:
                 if Detector.default not in DETECTORS:
-                    print("  ✗ Registry does not contain Detector.default")
+                    print("  ✗ Registry DETECTORS is missing Detector.default")
                     missing_deps.append("manga_translator.DETECTORS[default]")
                 if Detector.ctd not in DETECTORS:
-                    print("  ✗ Registry does not contain Detector.ctd")
+                    print("  ✗ Registry DETECTORS is missing Detector.ctd")
                     missing_deps.append("manga_translator.DETECTORS[ctd]")
                 if Detector.dbconvnext not in DETECTORS:
-                    print("  ✗ Registry does not contain Detector.dbconvnext")
+                    print("  ✗ Registry DETECTORS is missing Detector.dbconvnext")
                     missing_deps.append("manga_translator.DETECTORS[dbconvnext]")
-                print("  ✓ manga_translator detector registries verified.")
                 
-            try:
-                import manga_ocr
-                print(f"  ✓ manga-ocr imported successfully. Version: {get_package_version('manga-ocr')}")
-            except ImportError as e:
-                print(f"  ✗ Failed to import manga-ocr: {e}")
-                missing_deps.append("manga-ocr")
+                if not MANGA_OCR_IMPORT_ERROR:
+                    if Ocr.ocr48px not in OCRS:
+                        print("  ✗ Registry OCRS is missing Ocr.ocr48px")
+                        missing_deps.append("manga_translator.OCRS[ocr48px]")
+                    if Ocr.mocr not in OCRS:
+                        print("  ✗ Registry OCRS is missing Ocr.mocr")
+                        missing_deps.append("manga_translator.OCRS[mocr]")
 
     if missing_deps:
         print("\nCRITICAL: One or more requested engines failed strict installation checks.")
@@ -458,7 +620,6 @@ class PipelineBEngine(OcrEngine):
             )
 
             if language == "ja":
-                # Use manga-ocr (mocr) for Japanese
                 config = OcrConfig(ocr=Ocr.mocr)
                 ocr_regions = await dispatch_ocr(
                     ocr_key=Ocr.mocr,
@@ -492,47 +653,18 @@ class PipelineBEngine(OcrEngine):
                         "recognizerVersion": get_package_version("manga-ocr")
                     })
             else:
-                # Use PaddleOCR recognition for non-Japanese
                 paddle_ocr_engine = get_paddle_recognizer(language)
                 if paddle_ocr_engine is None:
                     raise ImportError("paddleocr package is not available for recognition-only execution.")
 
-                for idx, r in enumerate(detected_regions):
-                    try:
-                        crop_img = r.get_transformed_region(img, r.direction, 48)
-                    except Exception:
-                        x, y, w, h = int(r.aabb.x), int(r.aabb.y), int(r.aabb.w), int(r.aabb.h)
-                        x = max(0, min(x, img.shape[1] - 1))
-                        y = max(0, min(y, img.shape[0] - 1))
-                        w = max(1, min(w, img.shape[1] - x))
-                        h = max(1, min(h, img.shape[0] - y))
-                        crop_img = img[y:y+h, x:x+w]
-
-                    # Standalone PaddleOCR recognition-only API
-                    res_ocr = paddle_ocr_engine.ocr(crop_img, det=False, rec=True)
-                    text, conf = parse_paddle_rec_result(res_ocr)
-
-                    if not text or not text.strip():
-                        continue
-
-                    pts = [{"x": float(p[0]), "y": float(p[1])} for p in r.pts]
-                    x = int(r.aabb.x)
-                    y = int(r.aabb.y)
-                    w_box = int(r.aabb.w)
-                    h_box = int(r.aabb.h)
-
-                    regions_result.append({
-                        "id": f"region_{idx + 1}",
-                        "polygon": {"points": pts},
-                        "boundingBox": {"x": x, "y": y, "width": w_box, "height": h_box},
-                        "text": text.strip(),
-                        "confidence": conf,
-                        "orientation": r.direction if getattr(r, "direction", None) in ["horizontal", "vertical", "unknown"] else "unknown",
-                        "detector": "ctd",
-                        "recognizer": f"paddleocr-{language}",
-                        "detectorVersion": version_str,
-                        "recognizerVersion": get_package_version("paddleocr")
-                    })
+                regions_result = recognize_detected_regions_with_paddle(
+                    img,
+                    detected_regions,
+                    language,
+                    paddle_ocr_engine,
+                    "ctd",
+                    version_str
+                )
 
             status = "success" if regions_result else "no_text"
         except Exception as e:
@@ -556,7 +688,7 @@ class PipelineBEngine(OcrEngine):
         }
 
 
-# Pipeline C: DBConvNext detector + Japanese OCR (mocr) / standalone PaddleOCR recognition (KO / EN)
+# Pipeline C: DBConvNext detector + Japanese OCR (mocr) / standalone PaddleOCR recognition (KO / EN) (No fallback to default)
 class PipelineCEngine(OcrEngine):
     @property
     def name(self) -> str:
@@ -593,37 +725,21 @@ class PipelineCEngine(OcrEngine):
             height, width, _ = img.shape
 
             detector_key = Detector.dbconvnext
-            try:
-                detected_regions, raw_mask, mask = await dispatch_detection(
-                    detector_key=detector_key,
-                    image=img,
-                    detect_size=2048,
-                    text_threshold=0.5,
-                    box_threshold=0.7,
-                    unclip_ratio=2.3,
-                    invert=False,
-                    gamma_correct=False,
-                    rotate=False,
-                    auto_rotate=False,
-                    device=device_str,
-                    verbose=False
-                )
-            except Exception:
-                detector_key = Detector.default
-                detected_regions, raw_mask, mask = await dispatch_detection(
-                    detector_key=detector_key,
-                    image=img,
-                    detect_size=2048,
-                    text_threshold=0.5,
-                    box_threshold=0.7,
-                    unclip_ratio=2.3,
-                    invert=False,
-                    gamma_correct=False,
-                    rotate=False,
-                    auto_rotate=False,
-                    device=device_str,
-                    verbose=False
-                )
+            # Strict DBConvNext execution, NO fallback to default!
+            detected_regions, raw_mask, mask = await dispatch_detection(
+                detector_key=detector_key,
+                image=img,
+                detect_size=2048,
+                text_threshold=0.5,
+                box_threshold=0.7,
+                unclip_ratio=2.3,
+                invert=False,
+                gamma_correct=False,
+                rotate=False,
+                auto_rotate=False,
+                device=device_str,
+                verbose=False
+            )
 
             if language == "ja":
                 config = OcrConfig(ocr=Ocr.mocr)
@@ -653,7 +769,7 @@ class PipelineCEngine(OcrEngine):
                         "text": r.text.strip(),
                         "confidence": float(r.prob) if getattr(r, "prob", None) is not None else None,
                         "orientation": r.direction if getattr(r, "direction", None) in ["horizontal", "vertical", "unknown"] else "unknown",
-                        "detector": "dbconvnext" if detector_key == Detector.dbconvnext else "default",
+                        "detector": "dbconvnext",
                         "recognizer": "manga-ocr",
                         "detectorVersion": version_str,
                         "recognizerVersion": get_package_version("manga-ocr")
@@ -663,41 +779,14 @@ class PipelineCEngine(OcrEngine):
                 if paddle_ocr_engine is None:
                     raise ImportError("paddleocr package is not available for recognition-only execution.")
 
-                for idx, r in enumerate(detected_regions):
-                    try:
-                        crop_img = r.get_transformed_region(img, r.direction, 48)
-                    except Exception:
-                        x, y, w, h = int(r.aabb.x), int(r.aabb.y), int(r.aabb.w), int(r.aabb.h)
-                        x = max(0, min(x, img.shape[1] - 1))
-                        y = max(0, min(y, img.shape[0] - 1))
-                        w = max(1, min(w, img.shape[1] - x))
-                        h = max(1, min(h, img.shape[0] - y))
-                        crop_img = img[y:y+h, x:x+w]
-
-                    res_ocr = paddle_ocr_engine.ocr(crop_img, det=False, rec=True)
-                    text, conf = parse_paddle_rec_result(res_ocr)
-
-                    if not text or not text.strip():
-                        continue
-
-                    pts = [{"x": float(p[0]), "y": float(p[1])} for p in r.pts]
-                    x = int(r.aabb.x)
-                    y = int(r.aabb.y)
-                    w_box = int(r.aabb.w)
-                    h_box = int(r.aabb.h)
-
-                    regions_result.append({
-                        "id": f"region_{idx + 1}",
-                        "polygon": {"points": pts},
-                        "boundingBox": {"x": x, "y": y, "width": w_box, "height": h_box},
-                        "text": text.strip(),
-                        "confidence": conf,
-                        "orientation": r.direction if getattr(r, "direction", None) in ["horizontal", "vertical", "unknown"] else "unknown",
-                        "detector": "dbconvnext" if detector_key == Detector.dbconvnext else "default",
-                        "recognizer": f"paddleocr-{language}",
-                        "detectorVersion": version_str,
-                        "recognizerVersion": get_package_version("paddleocr")
-                    })
+                regions_result = recognize_detected_regions_with_paddle(
+                    img,
+                    detected_regions,
+                    language,
+                    paddle_ocr_engine,
+                    "dbconvnext",
+                    version_str
+                )
 
             status = "success" if regions_result else "no_text"
         except Exception as e:
@@ -879,7 +968,6 @@ def draw_annotations(image_path: str, result: Dict[str, Any], color: Tuple[int, 
 
     cv2.addWeighted(overlay, 0.15, img, 0.85, 0, img)
 
-    # Render CJK Unicode text labels using PIL/Pillow
     if ImageDraw:
         pil_img = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
         draw_pil = ImageDraw.Draw(pil_img)
@@ -892,14 +980,11 @@ def draw_annotations(image_path: str, result: Dict[str, Any], color: Tuple[int, 
             conf_percent = f"{round((r['confidence'] or 0.0)*100)}%" if r['confidence'] is not None else 'N/A'
             lbl = f"{r['id']} ({r['orientation']}) [Conf: {conf_percent}]"
             
-            # Label background & text
             draw_pil.text((bbox["x"], bbox["y"] - 14), lbl, font=font_label, fill=(255, 255, 255))
-            # Recognized CJK text output
             draw_pil.text((bbox["x"], bbox["y"] + bbox["height"] + 2), r["text"], font=font_text, fill=(255, 255, 255))
             
         img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
 
-    # Footer
     footer_text = f"Engine: {result['engine']} | Time: {result['processingTimeMs']}ms | Status: {result['status']}"
     cv2.putText(img, footer_text, (10, img.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 3, cv2.LINE_AA)
     cv2.putText(img, footer_text, (10, img.shape[0] - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1, cv2.LINE_AA)
@@ -941,7 +1026,6 @@ def generate_comparison_html(output_dir: str, benchmark_results: Dict[str, Any],
         html_lines.append(f"  <h2>Image: {img_name}</h2>")
         html_lines.append("  <div class='comparison-grid'>")
         
-        # Original column
         if os.path.isdir(input_source):
             orig_full = os.path.join(input_source, img_name)
         else:
@@ -955,7 +1039,6 @@ def generate_comparison_html(output_dir: str, benchmark_results: Dict[str, Any],
         html_lines.append("      </div>")
         html_lines.append("    </div>")
 
-        # Pipelines columns
         for engine_name in ["manga-image-translator-default", "manga-image-translator-ctd", "dbnet-mangaocr-paddleocr", "paddleocr-standalone"]:
             html_lines.append("    <div>")
             html_lines.append(f"      <div class='column-header'>{engine_name}</div>")
@@ -1003,7 +1086,6 @@ def generate_comparison_html(output_dir: str, benchmark_results: Dict[str, Any],
 
         html_lines.append("  </div>")
 
-    # Add manual review JSON template at the bottom
     review_template = {
         "manualReview": [
             {
@@ -1049,7 +1131,6 @@ def run_demo_mode(output_dir: str, language: str, cjk_font_path: Optional[str] =
     cv2.ellipse(dummy_img, (600, 800), (120, 180), 0, 0, 360, (255, 255, 255), -1)
     cv2.ellipse(dummy_img, (600, 800), (120, 180), 0, 0, 360, (0, 0, 0), 2)
     
-    # Render CJK text inside demo images using Pillow if possible
     if ImageDraw:
         pil_img = Image.fromarray(dummy_img)
         draw = ImageDraw.Draw(pil_img)

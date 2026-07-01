@@ -6,10 +6,11 @@ import tempfile
 import inspect
 import platform
 import numpy as np
+from typing import Tuple, List, Any
 
 print("=== STARTING STRICT OCR BENCHMARK SMOKE TESTS ===")
 
-# 1. Strict dependency imports (failures will fail GHA CI)
+# 1. Basic dependency imports (must always be present)
 try:
     import cv2
     from PIL import Image, ImageDraw, ImageFont
@@ -18,70 +19,98 @@ except ImportError as e:
     print(f"CRITICAL ERROR: Basic dependencies are missing: {e}")
     sys.exit(1)
 
+# 2. Optional top-level imports for deep learning packages (failures captured for lazy validation)
+PADDLE_IMPORT_ERROR = None
 try:
     import paddle
-    print("  ✓ paddlepaddle imported successfully.")
-except ImportError as e:
-    print(f"CRITICAL ERROR: paddlepaddle is missing: {e}")
-    sys.exit(1)
+except Exception as e:
+    PADDLE_IMPORT_ERROR = e
 
+PADDLEOCR_IMPORT_ERROR = None
 try:
     from paddleocr import PaddleOCR
-    print("  ✓ paddleocr imported successfully.")
-except ImportError as e:
-    print(f"CRITICAL ERROR: paddleocr is missing: {e}")
-    sys.exit(1)
+except Exception as e:
+    PADDLEOCR_IMPORT_ERROR = e
+    PaddleOCR = None
 
+MANGA_OCR_IMPORT_ERROR = None
 try:
     import manga_ocr
-    print("  ✓ manga-ocr imported successfully.")
-except ImportError as e:
-    print(f"CRITICAL ERROR: manga-ocr is missing: {e}")
-    sys.exit(1)
+except Exception as e:
+    MANGA_OCR_IMPORT_ERROR = e
+    manga_ocr = None
 
+HAS_MANGA_TRANSLATOR = False
+MANGA_TRANSLATOR_IMPORT_ERROR = None
 try:
     from manga_translator.config import Detector, Ocr, DetectorConfig, OcrConfig
     from manga_translator.detection import DETECTORS, dispatch as dispatch_detection
     from manga_translator.ocr import OCRS, dispatch as dispatch_ocr
     from manga_translator.utils import Quadrilateral
     HAS_MANGA_TRANSLATOR = True
-    print("  ✓ manga-image-translator configuration and dispatchers imported successfully.")
+except Exception as e:
+    MANGA_TRANSLATOR_IMPORT_ERROR = e
+    Detector = None
+    Ocr = None
+    DetectorConfig = None
+    OcrConfig = None
+    DETECTORS = {}
+    OCRS = {}
+    dispatch_detection = None
+    dispatch_ocr = None
+    Quadrilateral = None
+
+# Import helper functions from benchmark.py
+try:
+    from benchmark import recognize_detected_regions_with_paddle, parse_paddle_rec_result
 except ImportError as e:
-    print(f"CRITICAL ERROR: manga-image-translator is missing or broken: {e}")
+    print(f"CRITICAL ERROR: Failed to import helpers from benchmark.py: {e}")
     sys.exit(1)
 
-# Import the parsing utility
-try:
-    from benchmark import parse_paddle_rec_result
-except ImportError:
-    # Inline fallback if run outside directory
-    def parse_paddle_rec_result(res) -> tuple:
-        if not res:
-            return "", 0.0
-        try:
-            first = res[0]
-            if isinstance(first, list) and len(first) > 0:
-                item = first[0]
-                if isinstance(item, list) or isinstance(item, tuple):
-                    return str(item[0]), float(item[1])
-                elif isinstance(item, str):
-                    return item, float(first[1]) if len(first) > 1 else 0.0
-            elif isinstance(first, tuple) or isinstance(first, list):
-                return str(first[0]), float(first[1])
-        except Exception:
-            pass
-        return "", 0.0
+
+# Mocks for testing hybrid pipelines without loading heavy detector models
+class MockPaddleOCR:
+    def __init__(self, return_val=None):
+        self.return_val = return_val
+        self.last_img = None
+
+    def ocr(self, img, det=False, rec=True):
+        self.last_img = img
+        return self.return_val
 
 
-def create_synthetic_image(text: str) -> str:
-    """
-    Creates a high-resolution 1200x400 white image with black text using a 72px bold font.
-    """
+class MockRegionWithWarp:
+    def __init__(self, pts, direction="h", fail_warp=False):
+        self.pts = pts
+        self.direction = direction
+        self.fail_warp = fail_warp
+        self.get_transformed_called = False
+        
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        
+        class MockBBox:
+            def __init__(self, x, y, w, h):
+                self.x = x
+                self.y = y
+                self.w = w
+                self.h = h
+                
+        self.aabb = MockBBox(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys))
+
+    def get_transformed_region(self, img, direction, textheight):
+        self.get_transformed_called = True
+        if self.fail_warp:
+            raise RuntimeError("Warp failed simulation")
+        # Return a dummy small cropped array (48px height)
+        return np.ones((48, 100, 3), dtype=np.uint8)
+
+
+def create_synthetic_image(text: str) -> Tuple[str, str]:
     width, height = 1200, 400
     img = Image.new("RGB", (width, height), color="white")
     draw = ImageDraw.Draw(img)
 
-    # Search for bold system fonts
     font_paths = []
     if platform.system() == "Linux":
         font_paths = [
@@ -119,13 +148,12 @@ def create_synthetic_image(text: str) -> str:
             f"Paths checked: {font_paths}"
         )
 
-    print(f"  ✓ Loaded bold test font from: {loaded_path}")
     draw.text((100, 150), text, fill="black", font=font)
     
     temp_dir = tempfile.gettempdir()
     temp_path = os.path.join(temp_dir, "synthetic_smoke_test.png")
     img.save(temp_path)
-    return temp_path
+    return temp_path, loaded_path
 
 
 async def run_manga_translator_smoke_tests():
@@ -171,7 +199,7 @@ async def run_manga_translator_smoke_tests():
 def run_paddle_smoke_test():
     print("Verifying PaddleOCR standalone and recognition-only integration...")
     expected_text = "MANGALENS OCR TEST"
-    img_path = create_synthetic_image(expected_text)
+    img_path, font_path = create_synthetic_image(expected_text)
 
     try:
         # 1. Standalone test
@@ -190,7 +218,10 @@ def run_paddle_smoke_test():
             assert len(bbox) == 4, "PaddleOCR standalone did not return 4-point polygon"
             assert isinstance(confidence, (int, float)), "Confidence score is not numeric"
             assert len(detected_text.strip()) > 0, "PaddleOCR returned empty string label"
+            
             print(f"  ✓ Standalone PaddleOCR verified: '{detected_text}' ({confidence:.2f})")
+            print(f"  ✓ Fixture Font Path: {font_path}")
+            print(f"  ✓ Model Cache Path: {os.path.expanduser('~/.paddleocr')}")
         except AssertionError as e:
             print(f"CRITICAL TEST FAILURE: Standalone PaddleOCR verification failed!")
             print(f"Raw response: {results}")
@@ -199,7 +230,6 @@ def run_paddle_smoke_test():
 
         # 2. Recognition-only test (det=False, rec=True)
         img_np = cv2.imread(img_path)
-        # Crop centered text area roughly
         crop_img = img_np[100:300, 50:1100]
         
         ocr_rec = PaddleOCR(use_angle_cls=True, lang="en", show_log=False, det=False, rec=True)
@@ -229,81 +259,97 @@ def run_paddle_smoke_test():
 
 def test_hybrid_pipelines():
     print("Verifying hybrid Pipeline B & C logic...")
-    if not HAS_MANGA_TRANSLATOR:
-        print("  Skipped: manga-image-translator not installed.")
-        return
+    
+    dummy_img = np.ones((400, 400, 3), dtype=np.uint8)
+    dummy_pts = np.array([[10, 10], [100, 10], [100, 50], [10, 50]], dtype=np.float32)
+    
+    # 1. Success path (Warp succeeds)
+    r1 = MockRegionWithWarp(dummy_pts.copy(), direction="h", fail_warp=False)
+    mock_ocr = MockPaddleOCR([[["HELLO", 0.99]]])
+    
+    res1 = recognize_detected_regions_with_paddle(
+        dummy_img, [r1], "ko", mock_ocr, "ctd", "1.0.0"
+    )
+    
+    assert r1.get_transformed_called is True
+    assert mock_ocr.last_img is not None
+    assert len(res1) == 1
+    assert res1[0]["text"] == "HELLO"
+    assert res1[0]["confidence"] == 0.99
+    assert res1[0]["detector"] == "ctd"
+    assert res1[0]["recognizer"] == "paddleocr-ko"
+    np.testing.assert_array_equal(r1.pts, dummy_pts)
+    print("  ✓ Success warp path, coordinate preservation, and Korean recognizer label verified.")
 
-    # Create dummy detector polygon (4 points)
-    dummy_pts = np.array([
-        [100, 100],
-        [300, 100],
-        [300, 200],
-        [100, 200]
-    ], dtype=np.float32)
+    # 2. Warp fails -> Bounded AABB fallback succeeds
+    r2 = MockRegionWithWarp(dummy_pts.copy(), direction="h", fail_warp=True)
+    mock_ocr2 = MockPaddleOCR([[["WORLD", 0.95]]])
     
-    r = Quadrilateral(dummy_pts, text="", prob=0.0)
+    res2 = recognize_detected_regions_with_paddle(
+        dummy_img, [r2], "en", mock_ocr2, "dbconvnext", "1.0.0"
+    )
     
-    # 1. Verify coordinate preservation
-    original_pts = r.pts.copy()
-    original_aabb_x = r.aabb.x
-    original_aabb_y = r.aabb.y
-    original_aabb_w = r.aabb.w
-    original_aabb_h = r.aabb.h
+    assert r2.get_transformed_called is True
+    assert mock_ocr2.last_img is not None
+    assert mock_ocr2.last_img.shape == (40, 90, 3)  # Centered crop size: y: 50-10, x: 100-10
+    assert len(res2) == 1
+    assert res2[0]["text"] == "WORLD"
+    assert res2[0]["confidence"] == 0.95
+    assert res2[0]["detector"] == "dbconvnext"
+    assert res2[0]["recognizer"] == "paddleocr-en"
+    print("  ✓ Warp failure with AABB fallback path and English recognizer label verified.")
 
-    # Mock PaddleOCR 2.8.1 rec results shape: [[['MANGALENS TEST', 0.985]]]
-    mock_paddle_res = [[['MANGALENS TEST', 0.985]]]
-    
-    text, conf = parse_paddle_rec_result(mock_paddle_res)
-    assert text == "MANGALENS TEST"
-    assert conf == 0.985
-    
-    # Map back to original region
-    r.text = text
-    r.prob = conf
-    
-    # Check that coordinates are preserved exactly
-    np.testing.assert_array_equal(r.pts, original_pts)
-    assert r.aabb.x == original_aabb_x
-    assert r.aabb.y == original_aabb_y
-    assert r.aabb.w == original_aabb_w
-    assert r.aabb.h == original_aabb_h
-    print("  ✓ Coordinates preserved successfully.")
+    # 3. Empty recognition produces zero regions
+    r3 = MockRegionWithWarp(dummy_pts.copy(), direction="h", fail_warp=False)
+    mock_ocr3 = MockPaddleOCR([[["", 0.0]]])
+    res3 = recognize_detected_regions_with_paddle(
+        dummy_img, [r3], "ko", mock_ocr3, "ctd", "1.0.0"
+    )
+    assert len(res3) == 0
+    print("  ✓ Empty recognition returns zero regions verified.")
 
-    # 2. Produce zero regions when recognition returns empty text
-    empty_paddle_res = [[['', 0.0]]]
-    text_empty, conf_empty = parse_paddle_rec_result(empty_paddle_res)
-    assert text_empty == ""
-    
-    # Simulating region filtering in Pipeline B/C
-    regions_result = []
-    if text_empty and text_empty.strip():
-        regions_result.append({
-            "id": "region_1",
-            "polygon": {"points": [{"x": float(p[0]), "y": float(p[1])} for p in r.pts]},
-            "boundingBox": {"x": int(r.aabb.x), "y": int(r.aabb.y), "width": int(r.aabb.w), "height": int(r.aabb.h)},
-            "text": text_empty.strip(),
-            "confidence": conf_empty,
-            "detector": "ctd",
-            "recognizer": "paddleocr-en"
-        })
-    
-    assert len(regions_result) == 0, "Pipeline B/C must produce zero regions when recognition returns empty text"
-    print("  ✓ Empty recognition returns zero regions successfully.")
+    # 4. Malformed/failed recognition reported clearly
+    r4 = MockRegionWithWarp(dummy_pts.copy(), direction="h", fail_warp=False)
+    class BrokenPaddleOCR:
+        def ocr(self, *args, **kwargs):
+            raise RuntimeError("Inference failed simulation")
+            
+    res4 = recognize_detected_regions_with_paddle(
+        dummy_img, [r4], "ko", BrokenPaddleOCR(), "ctd", "1.0.0"
+    )
+    assert len(res4) == 0
+    print("  ✓ Malformed recognition output handled gracefully verified.")
 
 
 def main():
-    # 1. Run async WXT/manga-translator adapter verification
+    # 1. Run hybrid pipeline unit tests first (does not download large detector models or require heavy packages)
+    print("\n--- Running Hybrid Pipeline Unit Tests ---")
+    try:
+        test_hybrid_pipelines()
+    except Exception as e:
+        print(f"CRITICAL ERROR in hybrid pipeline unit test: {e}")
+        sys.exit(1)
+    print("--- Hybrid Pipeline Unit Tests Passed Successfully ---\n")
+
+    # 2. Run async WXT/manga-translator adapter verification
+    print("--- Running Heavy Package Import Validations ---")
+    if MANGA_TRANSLATOR_IMPORT_ERROR:
+        print(f"CRITICAL ERROR: manga-image-translator failed to import: {MANGA_TRANSLATOR_IMPORT_ERROR}")
+        sys.exit(1)
+    if MANGA_OCR_IMPORT_ERROR:
+        print(f"CRITICAL ERROR: manga-ocr failed to import: {MANGA_OCR_IMPORT_ERROR}")
+        sys.exit(1)
+    if PADDLE_IMPORT_ERROR:
+        print(f"CRITICAL ERROR: paddlepaddle failed to import: {PADDLE_IMPORT_ERROR}")
+        sys.exit(1)
+    if PADDLEOCR_IMPORT_ERROR:
+        print(f"CRITICAL ERROR: paddleocr failed to import: {PADDLEOCR_IMPORT_ERROR}")
+        sys.exit(1)
+
     try:
         asyncio.run(run_manga_translator_smoke_tests())
     except Exception as e:
         print(f"CRITICAL ERROR in manga-image-translator smoke test: {e}")
-        sys.exit(1)
-
-    # 2. Run hybrid pipeline tests
-    try:
-        test_hybrid_pipelines()
-    except Exception as e:
-        print(f"CRITICAL ERROR in hybrid pipeline smoke test: {e}")
         sys.exit(1)
 
     # 3. Run sync PaddleOCR standalone/rec-only validation
