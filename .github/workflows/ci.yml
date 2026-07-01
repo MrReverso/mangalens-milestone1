@@ -39,6 +39,9 @@ jobs:
       - name: Run pip check (manga-engine)
         run: |
           docker run --entrypoint python ocr-benchmark-manga-engine -m pip check
+      - name: Run source-import verification (manga-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-manga-engine verify_source_imports.py
       - name: Run import/registry health check (manga-engine)
         run: |
           docker run --entrypoint python ocr-benchmark-manga-engine verify_manga_registry.py
