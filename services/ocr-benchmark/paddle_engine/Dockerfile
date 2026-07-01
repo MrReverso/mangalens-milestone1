@@ -2,7 +2,7 @@ FROM python:3.10-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libgomp1 \
     libsm6 \
@@ -21,6 +21,7 @@ RUN python -m pip check
 
 # Copy app code
 COPY app.py .
+COPY verify_paddle_inference.py .
 
 EXPOSE 8003
 

@@ -500,6 +500,7 @@ class PipelineRunner:
         start_time = time.time()
         errors = []
         regions_result = []
+        status = "no_text"
         
         try:
             # 1. Get detector polygons
@@ -539,6 +540,7 @@ class PipelineRunner:
                     ocr_res = r_ocr.json()
                     if ocr_res.get("errors"):
                         errors.extend(ocr_res["errors"])
+                        status = "failed"
                     else:
                         for r in ocr_res.get("regions", []):
                             regions_result.append({
@@ -556,10 +558,14 @@ class PipelineRunner:
                                 "detector": detector_name,
                                 "recognizer": "manga-ocr"
                             })
+                        status = "success" if regions_result else "no_text"
                 else:
                     # English/Korean recognition: orchestrator crops region and sends to paddle-engine
                     crop_files = []
                     valid_indices = []
+                    failed_crops = 0
+                    empty_crops = 0
+                    successful_crops = 0
                     
                     # Create temporary crop image files to send via multipart
                     temp_files_to_cleanup = []
@@ -579,6 +585,7 @@ class PipelineRunner:
                                     crop_success = True
                                 except Exception as aabb_ex:
                                     errors.append(f"Crop failure on region_{idx + 1}: perspective: {ex}; AABB: {aabb_ex}")
+                                    failed_crops += 1
                                     
                             if crop_success and crop_img is not None and crop_img.size > 0:
                                 temp_fd, temp_path = tempfile.mkstemp(suffix=".png")
@@ -588,6 +595,10 @@ class PipelineRunner:
                                 
                                 crop_files.append(("files", open(temp_path, "rb")))
                                 valid_indices.append(idx)
+                            else:
+                                if crop_success:
+                                    errors.append(f"Crop on region_{idx + 1} produced empty image.")
+                                    failed_crops += 1
                                 
                         # Call paddle-engine /recognize
                         if crop_files:
@@ -617,13 +628,16 @@ class PipelineRunner:
                                 
                                 if res_item.get("error"):
                                     errors.append(f"Crop {original_idx + 1} recognition error: {res_item['error']}")
+                                    failed_crops += 1
                                     continue
                                     
                                 recognized_text = res_item.get("text", "").strip()
                                 # Empty recognition yields no region
                                 if not recognized_text:
+                                    empty_crops += 1
                                     continue
                                     
+                                successful_crops += 1
                                 regions_result.append({
                                     "id": orig_region["id"],
                                     "polygon": {"points": [{"x": float(p[0]), "y": float(p[1])} for p in orig_region["pts"]]},
@@ -639,13 +653,23 @@ class PipelineRunner:
                                     "detector": detector_name,
                                     "recognizer": f"paddleocr-{language}"
                                 })
+                        else:
+                            # All crops failed to generate
+                            pass
                     finally:
                         # Clean up crops
                         for tp in temp_files_to_cleanup:
                             if os.path.exists(tp):
                                 os.remove(tp)
                                 
-            status = "success" if regions_result else "no_text"
+                    if successful_crops > 0:
+                        status = "success"
+                    elif failed_crops > 0:
+                        status = "failed"
+                    else:
+                        status = "no_text"
+            else:
+                status = "no_text"
         except requests.exceptions.ConnectionError as ce:
             errors.append(f"ConnectionError: Services unavailable. Details: {ce}")
             status = "unavailable"

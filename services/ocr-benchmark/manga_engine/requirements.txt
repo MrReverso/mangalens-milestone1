@@ -25,4 +25,4 @@ python-dotenv
 aioshutil
 aiofiles
 arabic-reshaper
-pyhyp
+pyhyphen

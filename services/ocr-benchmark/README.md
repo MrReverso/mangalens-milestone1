@@ -1,113 +1,84 @@
 # Manga/Manhwa Text Detection and OCR Engine Benchmark Spike
 
-This service implements a research spike to compare manga and manhwa text detection and OCR pipelines using authentic, local-first execution.
+This directory implements a research spike to compare manga and manhwa text detection and OCR pipelines using isolated microservices running under Docker Compose.
 
 ---
 
 ## 1. Benchmarked Pipelines
 
-### Pipeline A
-- **Detector**: `manga-image-translator` default detector (`dbnet`).
-- **OCR**: `manga-image-translator` default `ocr48px` OCR.
-
-### Pipeline B
-- **Detector**: `manga-image-translator` Comic Text Detector (`ctd`).
-- **OCR**: `manga-ocr` for Japanese; standalone `PaddleOCR` recognition (via crop-warped segments) for Korean and English.
-
-### Pipeline C
-- **Detector**: `DBConvNext` detector (falls back to `dbnet` if unavailable).
-- **OCR**: `manga-ocr` for Japanese; standalone `PaddleOCR` recognition (via crop-warped segments) for Korean and English.
-
-### Pipeline D
-- **Detector/OCR**: `PaddleOCR` standalone (performs both text detection and character recognition).
+*   **Pipeline A**:
+    *   *Detector*: `manga-engine` default detector (`dbnet`).
+    *   *OCR*: `manga-engine` `ocr48px` OCR.
+*   **Pipeline B (Hybrid)**:
+    *   *Detector*: `manga-engine` Comic Text Detector (`ctd`).
+    *   *OCR*: `manga-engine` `manga-ocr` for Japanese; `paddle-engine` recognition (via crop-warped segments) for Korean and English.
+*   **Pipeline C (Hybrid - Strict)**:
+    *   *Detector*: `manga-engine` DBConvNext detector (fails-fast; **no** silent fallbacks).
+    *   *OCR*: `manga-engine` `manga-ocr` for Japanese; `paddle-engine` recognition (via crop-warped segments) for Korean and English.
+*   **Pipeline D**:
+    *   *Detector/OCR*: `paddle-engine` standalone PaddleOCR detection + recognition.
 
 ---
 
-## 2. Setup and Installation
+## 2. Microservice Architecture Design
 
-### A. Local Setup (Virtual Environment)
-1. **Create and activate environment**:
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   ```
-2. **Install requirements**:
-   ```bash
-   pip install -r requirements.txt
-   ```
+To resolve Python package and binary/version conflicts (like `protobuf` and `numpy` clashing between PyTorch and PaddleOCR), the runner is divided into three isolated nodes:
 
-### B. Strict Installation and Engine Verification
-To verify that all deep learning modules, dependencies, and adapter schemas are successfully loaded without running a full image batch:
+1.  **manga-engine** (`manga_engine/`): Exposes FastAPI endpoints on port `8002` for text detection (default, ctd, dbconvnext) and Japanese recognition (manga-ocr, ocr48px).
+2.  **paddle-engine** (`paddle_engine/`): Exposes FastAPI endpoints on port `8003` for crop recognition (EN/KO) and standalone PaddleOCR detection + recognition.
+3.  **benchmark-orchestrator** (`orchestrator/`): A lightweight orchestrator client that handles image loading, perspective warping/cropping of polygons, service coordination, and report generation.
+
+---
+
+## 3. Setup and Orchestration
+
+### A. Build Containers
+Build all three isolated services from their respective directories:
 ```bash
-python benchmark.py --check-engines paddle,ctd,dbconvnext,default
+docker compose build --no-cache
 ```
-This command checks imports for `paddleocr`, `paddlepaddle`, `manga-ocr`, and `manga-image-translator`, and verifies that their detector/OCR registries match our adapter contract. It exits with code `0` on success, or a non-zero code printing the exact missing dependency on failure.
+*Note: During build, each container runs `python -m pip check` to verify zero packaging conflicts.*
 
-### C. Docker Setup
-To avoid version conflicts and bloated images, build the two separate, isolated target Docker images:
-
+### B. Boot Services and Execute Integration Tests
+To boot the engines, perform health checks, and run the `pytest` orchestrator test suite:
 ```bash
-# Build PaddleOCR execution image
-docker build -f Dockerfile.paddle -t mangalens-ocr-paddle .
-
-# Build manga-image-translator execution image
-docker build -f Dockerfile.manga-translator -t mangalens-ocr-manga .
+docker compose up --build --exit-code-from benchmark-orchestrator
 ```
+This command automatically exits with the orchestrator container's return code, making it suitable for CI validation.
 
-### D. Running with Docker Compose
-Run the separate compose services:
+### C. Shutdown Services
+To stop and clean up containers:
 ```bash
-# Execute standalone PaddleOCR benchmarks
-docker compose run ocr-paddle
-
-# Execute manga-image-translator and CTD/DBConvNext benchmarks
-docker compose run ocr-manga-translator
+docker compose down
 ```
 
 ---
 
-## 3. How to Run the Benchmark Locally
+## 4. Running Benchmarks Locally
 
-### A. Run in Mock/Demo Mode (Generates synthetic test reports under results/demo/)
-To verify script parsing and overlay rendering without download overhead:
+### A. Run in Demo Mode (Generates synthetic test reports under results/demo/)
+To verify HTTP calls, script parsing, and HTML rendering without downloading heavy deep learning weights:
 ```bash
-python benchmark.py --input ./samples --output ./results --language ko --engines all --demo
+python orchestrator/orchestrator.py --input ./samples --output ./results --language ko --engines all --demo
 ```
 
 ### B. Run Authentic Benchmark Executions
-Run the benchmark on real manga/webtoon images separated by language:
+Place your clean test images under the target directories and execute requests:
 ```bash
 # Run Korean webtoon pages benchmark
-python benchmark.py --input ./samples/korean --output ./results/korean --language ko --engines all
+python orchestrator/orchestrator.py --input ./samples/korean --output ./results/korean --language ko --engines all
 
 # Run Japanese manga pages benchmark
-python benchmark.py --input ./samples/japanese --output ./results/japanese --language ja --engines all
+python orchestrator/orchestrator.py --input ./samples/japanese --output ./results/japanese --language ja --engines all
 
 # Run English comic pages benchmark
-python benchmark.py --input ./samples/english --output ./results/english --language en --engines all
+python orchestrator/orchestrator.py --input ./samples/english --output ./results/english --language en --engines all
 ```
 
 ---
 
-## 4. CJK Font Configuration
-Drawing Japanese and Korean text labels on the output annotated images requires a CJK-capable font. 
-
-Pass the local path of a CJK TrueType/OpenType font using the `--cjk-font` parameter:
-```bash
-python benchmark.py --input ./samples/korean --output ./results/korean --language ko --engines all --cjk-font "/Library/Fonts/Arial Unicode.ttf"
-```
-Or for Linux (Noto Sans CJK):
-```bash
-python benchmark.py --input ./samples/japanese --output ./results/japanese --language ja --engines all --cjk-font "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"
-```
-
-If no `--cjk-font` is provided, the script will automatically check common macOS and Linux system CJK fonts, falling back to basic default fonts (with a CJK drawing warning) if none are found.
-
----
-
-## 5. Reports and Annotated Overlays
-Upon successful execution, the output directory contains:
-- `report.json`: JSON output mapping all authentic region coordinates, text, confidence, detectors, and recognizers.
-- `report.md`: Main Markdown report comparing duration, memory usage, and region counts.
-- `comparison.html`: HTML side-by-side view comparing original images with Pipeline A/B/C/D annotations, showing exact recognized texts and metadata.
-- `annotated_<engine>_<image>`: Distinguishable annotated overlays.
+## 5. Output Reports and Manual Review
+Upon completion, the orchestrator produces:
+-   `report.json`: JSON output mapping all authentic region coordinates, text labels, and confidence metrics.
+-   `comparison.html`: Dark-themed grid comparison view showing side-by-side annotations, text snippets, and the manual review JSON template.
+-   `annotated_<engine>_<image>.png`: Result overlay images.

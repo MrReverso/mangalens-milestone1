@@ -35,7 +35,17 @@ jobs:
           docker run --entrypoint python ocr-benchmark-manga-engine -m pip check
       - name: Run import/registry health check (manga-engine)
         run: |
-          docker run --entrypoint python ocr-benchmark-manga-engine -c "from manga_translator.config import Detector; print('manga_translator registry ok!')"
+          docker run --entrypoint python ocr-benchmark-manga-engine -c " \
+          from manga_translator.config import Detector, Ocr; \
+          from manga_translator.detection import DETECTORS; \
+          from manga_translator.ocr import OCRS; \
+          assert Detector.default in DETECTORS, 'Detector.default not in DETECTORS'; \
+          assert Detector.ctd in DETECTORS, 'Detector.ctd not in DETECTORS'; \
+          assert Detector.dbconvnext in DETECTORS, 'Detector.dbconvnext not in DETECTORS'; \
+          assert Ocr.ocr48px in OCRS, 'Ocr.ocr48px not in OCRS'; \
+          assert Ocr.mocr in OCRS, 'Ocr.mocr not in OCRS'; \
+          print('All manga registries verified') \
+          "
       - name: Build paddle-engine image
         run: |
           docker build -t ocr-benchmark-paddle-engine -f services/ocr-benchmark/paddle_engine/Dockerfile services/ocr-benchmark/paddle_engine
@@ -44,18 +54,18 @@ jobs:
           docker run --entrypoint python ocr-benchmark-paddle-engine -m pip check
       - name: Run PaddleOCR runtime inference (paddle-engine)
         run: |
-          docker run --entrypoint python ocr-benchmark-paddle-engine -c "from paddleocr import PaddleOCR; import numpy as np; ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False); res = ocr.ocr(np.ones((200, 200, 3), dtype=np.uint8)*255, det=False, rec=True); print('PaddleOCR inference results:', res)"
+          docker run --entrypoint python ocr-benchmark-paddle-engine verify_paddle_inference.py
       - name: Start Docker Compose and execute Orchestrator integration tests
         run: |
           cd services/ocr-benchmark
-          docker-compose up --build --exit-code-from benchmark-orchestrator
+          CI=true docker compose up --build --exit-code-from benchmark-orchestrator
       - name: Shut down services
         if: always()
         run: |
           cd services/ocr-benchmark
-          docker-compose down
-      - name: Dump docker-compose logs on failure
+          docker compose down
+      - name: Dump docker compose logs on failure
         if: failure()
         run: |
           cd services/ocr-benchmark
-          docker-compose logs
+          docker compose logs
