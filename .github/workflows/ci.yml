@@ -25,36 +25,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.10"
-      - name: Cache PaddleOCR models
-        uses: actions/cache@v4
-        with:
-          path: ~/.paddleocr
-          key: ${{ runner.os }}-paddle-models-${{ hashFiles('services/ocr-benchmark/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-paddle-models-
-      - name: Install dependencies
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build manga-engine image
         run: |
-          python -m pip install --upgrade pip
-          pip install "numpy<2.0.0" pillow psutil opencv-python-headless pytest
-          pip install paddlepaddle==2.6.2 paddleocr==2.8.1
-          pip install manga-ocr==0.1.14
-          curl -s -o /tmp/manga_translator_reqs.txt https://raw.githubusercontent.com/zyddnys/manga-image-translator/main/requirements.txt
-          grep -v -E "numpy|torch|torchvision" /tmp/manga_translator_reqs.txt > /tmp/filtered_reqs.txt
-          pip install -r /tmp/filtered_reqs.txt
-          pip install git+https://github.com/zyddnys/manga-image-translator.git@efdc229de8aa0f3d4051ad97664adc62dd5ac605
-      - name: Run syntax and import checks
+          docker build -t ocr-benchmark-manga-engine -f services/ocr-benchmark/manga_engine/Dockerfile services/ocr-benchmark/manga_engine
+      - name: Run pip check (manga-engine)
         run: |
-          python -m py_compile services/ocr-benchmark/benchmark.py
-          python -m py_compile services/ocr-benchmark/test_smoke.py
-      - name: Run strict engine checks
+          docker run --entrypoint python ocr-benchmark-manga-engine -m pip check
+      - name: Run import/registry health check (manga-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-manga-engine -c "from manga_translator.config import Detector; print('manga_translator registry ok!')"
+      - name: Build paddle-engine image
+        run: |
+          docker build -t ocr-benchmark-paddle-engine -f services/ocr-benchmark/paddle_engine/Dockerfile services/ocr-benchmark/paddle_engine
+      - name: Run pip check (paddle-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-paddle-engine -m pip check
+      - name: Run PaddleOCR runtime inference (paddle-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-paddle-engine -c "from paddleocr import PaddleOCR; import numpy as np; ocr = PaddleOCR(use_angle_cls=True, lang='en', show_log=False); res = ocr.ocr(np.ones((200, 200, 3), dtype=np.uint8)*255, det=False, rec=True); print('PaddleOCR inference results:', res)"
+      - name: Start Docker Compose and execute Orchestrator integration tests
         run: |
           cd services/ocr-benchmark
-          python3 benchmark.py --check-engines paddle,ctd,dbconvnext,default
-      - name: Run runtime smoke tests
+          docker-compose up --build --exit-code-from benchmark-orchestrator
+      - name: Shut down services
+        if: always()
         run: |
           cd services/ocr-benchmark
-          python3 test_smoke.py
+          docker-compose down
+      - name: Dump docker-compose logs on failure
+        if: failure()
+        run: |
+          cd services/ocr-benchmark
+          docker-compose logs

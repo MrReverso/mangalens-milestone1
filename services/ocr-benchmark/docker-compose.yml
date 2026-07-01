@@ -1,20 +1,46 @@
 version: '3.8'
 
 services:
-  ocr-paddle:
+  manga-engine:
     build:
-      context: .
-      dockerfile: Dockerfile.paddle
-    volumes:
-      - ./samples:/app/samples
-      - ./results:/app/results
-    command: --input /app/samples --output /app/results --language ko --engines paddle
+      context: ./manga_engine
+      dockerfile: Dockerfile
+    ports:
+      - "8002:8002"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    environment:
+      - PORT=8002
 
-  ocr-manga-translator:
+  paddle-engine:
     build:
-      context: .
-      dockerfile: Dockerfile.manga-translator
+      context: ./paddle_engine
+      dockerfile: Dockerfile
+    ports:
+      - "8003:8003"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8003/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 15
+    environment:
+      - PORT=8003
+
+  benchmark-orchestrator:
+    build:
+      context: ./orchestrator
+      dockerfile: Dockerfile
+    depends_on:
+      manga-engine:
+        condition: service_healthy
+      paddle-engine:
+        condition: service_healthy
+    environment:
+      - MANGA_ENGINE_URL=http://manga-engine:8002
+      - PADDLE_ENGINE_URL=http://paddle-engine:8003
     volumes:
       - ./samples:/app/samples
       - ./results:/app/results
-    command: --input /app/samples --output /app/results --language ja --engines default,ctd,dbconvnext
