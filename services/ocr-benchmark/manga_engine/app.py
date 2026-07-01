@@ -52,8 +52,8 @@ async def detect(
             
         device = get_optimal_device()
         
-        # If CI environment is set, return a mock bounding box matching the synthetic test fixture
-        if os.environ.get("CI") == "true" and detector in ["ctd", "dbconvnext", "default"]:
+        # If mock detector environment flag is active, return a mock bounding box matching the synthetic test fixture
+        if os.environ.get("OCR_BENCHMARK_MOCK_DETECTOR") == "true" and detector in ["ctd", "dbconvnext", "default"]:
             version_str = importlib.metadata.version("manga-image-translator")
             return {
                 "width": width,
@@ -65,7 +65,9 @@ async def detect(
                         "id": "region_1",
                         "pts": [[100.0, 150.0], [1100.0, 150.0], [1100.0, 250.0], [100.0, 250.0]],
                         "aabb": {"x": 100, "y": 150, "w": 1000, "h": 100},
-                        "direction": "h"
+                        "direction": "h",
+                        "detectorMode": "mock",
+                        "detectorInferenceRan": False
                     }
                 ],
                 "errors": []
@@ -98,7 +100,9 @@ async def detect(
                     "w": int(r.aabb.w),
                     "h": int(r.aabb.h)
                 },
-                "direction": r.direction
+                "direction": r.direction,
+                "detectorMode": "genuine",
+                "detectorInferenceRan": True
             })
             
         version_str = importlib.metadata.version("manga-image-translator")

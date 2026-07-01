@@ -14,6 +14,7 @@ services:
       retries: 15
     environment:
       - PORT=8002
+      - OCR_BENCHMARK_MOCK_DETECTOR=${OCR_BENCHMARK_MOCK_DETECTOR:-false}
 
   paddle-engine:
     build:
@@ -41,6 +42,7 @@ services:
     environment:
       - MANGA_ENGINE_URL=http://manga-engine:8002
       - PADDLE_ENGINE_URL=http://paddle-engine:8003
+      - OCR_BENCHMARK_STRICT_E2E=${OCR_BENCHMARK_STRICT_E2E:-false}
     volumes:
       - ./samples:/app/samples
       - ./results:/app/results

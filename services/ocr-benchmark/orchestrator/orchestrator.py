@@ -451,6 +451,7 @@ class PipelineRunner:
                     errors.extend(ocr_res["errors"])
                 else:
                     for r in ocr_res.get("regions", []):
+                        orig_region = next((dr for dr in detected_regions if dr["id"] == r["id"]), {})
                         regions_result.append({
                             "id": r["id"],
                             "polygon": {"points": [{"x": float(p[0]), "y": float(p[1])} for p in r["pts"]]},
@@ -464,7 +465,9 @@ class PipelineRunner:
                             "confidence": r["confidence"],
                             "orientation": normalize_orientation(r["direction"]),
                             "detector": "default",
-                            "recognizer": "ocr48px"
+                            "recognizer": "ocr48px",
+                            "detectorMode": orig_region.get("detectorMode", "genuine"),
+                            "detectorInferenceRan": orig_region.get("detectorInferenceRan", True)
                         })
                         
             status = "success" if regions_result else "no_text"
@@ -543,6 +546,7 @@ class PipelineRunner:
                         status = "failed"
                     else:
                         for r in ocr_res.get("regions", []):
+                            orig_region = next((dr for dr in detected_regions if dr["id"] == r["id"]), {})
                             regions_result.append({
                                 "id": r["id"],
                                 "polygon": {"points": [{"x": float(p[0]), "y": float(p[1])} for p in r["pts"]]},
@@ -556,7 +560,9 @@ class PipelineRunner:
                                 "confidence": r["confidence"],
                                 "orientation": normalize_orientation(r["direction"]),
                                 "detector": detector_name,
-                                "recognizer": "manga-ocr"
+                                "recognizer": "manga-ocr",
+                                "detectorMode": orig_region.get("detectorMode", "genuine"),
+                                "detectorInferenceRan": orig_region.get("detectorInferenceRan", True)
                             })
                         status = "success" if regions_result else "no_text"
                 else:
@@ -651,7 +657,9 @@ class PipelineRunner:
                                     "confidence": res_item.get("confidence", 1.0),
                                     "orientation": normalize_orientation(orig_region["direction"]),
                                     "detector": detector_name,
-                                    "recognizer": f"paddleocr-{language}"
+                                    "recognizer": f"paddleocr-{language}",
+                                    "detectorMode": orig_region.get("detectorMode", "genuine"),
+                                    "detectorInferenceRan": orig_region.get("detectorInferenceRan", True)
                                 })
                         else:
                             # All crops failed to generate
@@ -733,7 +741,9 @@ class PipelineRunner:
                     "confidence": r["confidence"],
                     "orientation": "vertical" if h_box > w_box * 1.5 else "horizontal",
                     "detector": "paddleocr",
-                    "recognizer": f"paddleocr-{language}"
+                    "recognizer": f"paddleocr-{language}",
+                    "detectorMode": "genuine",
+                    "detectorInferenceRan": True
                 })
                 
             status = "success" if regions_result else "no_text"

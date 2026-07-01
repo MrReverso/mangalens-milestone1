@@ -27,25 +27,17 @@ jobs:
       - uses: actions/checkout@v4
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+      - name: Create results directory
+        run: mkdir -p services/ocr-benchmark/results/ci
       - name: Build manga-engine image
         run: |
-          docker build -t ocr-benchmark-manga-engine -f services/ocr-benchmark/manga_engine/Dockerfile services/ocr-benchmark/manga_engine
+          docker build --no-cache --progress=plain -t ocr-benchmark-manga-engine -f services/ocr-benchmark/manga_engine/Dockerfile services/ocr-benchmark/manga_engine 2>&1 | tee services/ocr-benchmark/results/ci/manga_engine_build.log
       - name: Run pip check (manga-engine)
         run: |
           docker run --entrypoint python ocr-benchmark-manga-engine -m pip check
       - name: Run import/registry health check (manga-engine)
         run: |
-          docker run --entrypoint python ocr-benchmark-manga-engine -c " \
-          from manga_translator.config import Detector, Ocr; \
-          from manga_translator.detection import DETECTORS; \
-          from manga_translator.ocr import OCRS; \
-          assert Detector.default in DETECTORS, 'Detector.default not in DETECTORS'; \
-          assert Detector.ctd in DETECTORS, 'Detector.ctd not in DETECTORS'; \
-          assert Detector.dbconvnext in DETECTORS, 'Detector.dbconvnext not in DETECTORS'; \
-          assert Ocr.ocr48px in OCRS, 'Ocr.ocr48px not in OCRS'; \
-          assert Ocr.mocr in OCRS, 'Ocr.mocr not in OCRS'; \
-          print('All manga registries verified') \
-          "
+          docker run --entrypoint python ocr-benchmark-manga-engine verify_manga_registry.py
       - name: Build paddle-engine image
         run: |
           docker build -t ocr-benchmark-paddle-engine -f services/ocr-benchmark/paddle_engine/Dockerfile services/ocr-benchmark/paddle_engine
@@ -54,18 +46,20 @@ jobs:
           docker run --entrypoint python ocr-benchmark-paddle-engine -m pip check
       - name: Run PaddleOCR runtime inference (paddle-engine)
         run: |
-          docker run --entrypoint python ocr-benchmark-paddle-engine verify_paddle_inference.py
+          docker run --entrypoint python ocr-benchmark-paddle-engine verify_paddle_inference.py 2>&1 | tee services/ocr-benchmark/results/ci/paddle_inference.log
       - name: Start Docker Compose and execute Orchestrator integration tests
         run: |
           cd services/ocr-benchmark
-          CI=true docker compose up --build --exit-code-from benchmark-orchestrator
-      - name: Shut down services
+          OCR_BENCHMARK_MOCK_DETECTOR=true OCR_BENCHMARK_STRICT_E2E=true docker compose up --build --exit-code-from benchmark-orchestrator
+      - name: Shut down services and dump logs
         if: always()
         run: |
           cd services/ocr-benchmark
+          docker compose logs 2>&1 | tee results/ci/docker_compose_logs.log
           docker compose down
-      - name: Dump docker compose logs on failure
-        if: failure()
-        run: |
-          cd services/ocr-benchmark
-          docker compose logs
+      - name: Upload CI evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-benchmark-ci-evidence
+          path: services/ocr-benchmark/results/ci/**
