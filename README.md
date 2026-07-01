@@ -1,166 +1,99 @@
-# MangaLens — Milestone 4B: Google Vision OCR Preview
+# MangaLens — Milestone 4C: Local OCR and Accurate Text Overlay Placement
 
-MangaLens is a Chrome Manifest V3 prototype for manga, manhwa, and webtoon
-translation experiences. Milestone 4B adds Google Cloud Vision as an optional
-development benchmark and future fallback for difficult pages. It is not the
-final local-first OCR architecture, and it does not translate detected text.
+MangaLens is a Chrome Manifest V3 prototype for manga, manhwa, and webtoon translation experiences. Milestone 4C replaces the template-based mockup coordinates with a **real local OCR character recognition engine** running entirely client-side. It does not implement real translation yet (translated text is set equal to original text).
 
-## What Milestone 4B adds
+---
 
-- **OCR via Dev API** captures one fully visible detected page and, only after
-  explicit paid-provider opt-in, sends the cropped PNG to the loopback backend.
-- The backend authenticates with Google Application Default Credentials (ADC)
-  and calls exactly
-  `https://vision.googleapis.com/v1/images:annotate`.
-- Google Vision runs only `DOCUMENT_TEXT_DETECTION`.
-- Paragraph symbols are reconstructed into text, and paragraph quadrilaterals
-  are normalized using MangaLens's trusted captured pixel dimensions.
-- Each valid paragraph becomes an editable MangaLens bubble with
-  `originalText` and `translatedText` both set to the detected OCR text.
-- Provider responses and errors are runtime-validated and reduced to safe,
-  allowlisted contracts before returning to the extension.
+## Local OCR Architecture
 
-The popup explicitly reports **Translation not enabled** after a successful OCR
-preview.
-
-## Local demo versus OCR preview
-
-- **Translate Visible Page** uses the deterministic in-extension local demo. It
-  never contacts the development backend or Google.
-- **OCR via Dev API** sends the captured page through
-  `http://127.0.0.1:8787/v1/translate` to Google Vision and displays detected
-  text without translating it.
-
-Both modes reuse the same capture coordinator, per-tab operation lock, total
-deadline, operation sequence, stale-result protection, content application,
-and editable overlay system. They cannot overlap in the same tab.
-
-## Privacy boundary
-
-The PNG may travel only through:
-
-```text
-extension background
-→ http://127.0.0.1:8787/v1/translate
-→ https://vision.googleapis.com/v1/images:annotate
+```mermaid
+graph TD
+  Background[Background Service Worker] -- Sends base64 PNG & metadata --> Offscreen[Offscreen Document]
+  Offscreen -- Spawns dedicated thread --> WebWorker[Tesseract Web Worker]
+  WebWorker -- Loads locally --> WASM[Local WASM & Models]
+  Offscreen -- Returns recognized boxes --> Background
 ```
 
-Images are sent to Google only after the user clicks **OCR via Dev API**.
-Captured images and OCR text are held temporarily in memory and are not written
-to disk, Chrome storage, a database, logs, analytics, or cache storage. Google
-access tokens remain inside the backend process and are never sent to the
-extension.
+1. **Background Service Worker**:
+   - Coordinates the capture process, manages operation sequencing, and controls tab lifecycle.
+   - Enforces a unified execution deadline for each scan tab.
+   - Converts the captured PNG `Blob` to a memory-only base64 data-URL string and routes it to the offscreen page via `chrome.runtime.sendMessage`.
 
-Google Cloud Vision usage may incur charges under the selected Google Cloud
-project's billing account.
+2. **Offscreen Document**:
+   - Compiled from `entrypoints/offscreen.html` and `lib/translation/offscreen.ts`.
+   - Runs in a separate, dedicated extension origin context, allowing DOM canvas processing (`OffscreenCanvas`), pixel contrast binarization (Connected Component Analysis), text box cropping, and local worker spawning without violating Manifest V3 restrictions.
 
-Google Vision is disabled unless the backend process receives the exact value:
+3. **Tesseract Web Worker**:
+   - The offscreen document uses `Tesseract.createWorker` to spawn a dedicated Web Worker (`new Worker()`) running the compiled WebAssembly OCR engine.
+   - Standard, SIMD, LSTM, and SIMD-LSTM WebAssembly cores are loaded locally depending on browser capabilities.
 
-```text
-MANGALENS_ENABLE_GOOGLE_VISION=true
-```
+4. **Offscreen Lifecycle Management**:
+   - The background service worker tracks the active scan requests count.
+   - The offscreen document context is created on the first active scan and kept alive as long as `activeScansCount > 0`.
+   - Once all scans finish (either successfully, failing, aborting, or timing out), the background page invokes `chrome.offscreen.closeDocument()` to release all resources.
+   - If a new request arrives while a previous document closure is pending, the initialization queues and awaits the closure promise to complete, avoiding Chrome MV3 document collision races.
 
-Missing, differently-cased, whitespace-padded, or alternative truthy values do
-not enable it. While disabled, OCR requests return
-`ocr-provider-disabled` without authentication or a Google request.
+5. **Wasm in Manifest V3 (CSP)**:
+   - WXT manifest configuration defines a strict Content Security Policy allowing WebAssembly execution within the extension context:
+     ```json
+     "content_security_policy": {
+       "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+     }
+     ```
+   - No assets are exposed in `web_accessible_resources`, preventing external website fingerprinting.
 
-## Google Cloud setup
+---
 
-1. Create or select a Google Cloud project.
-2. Enable billing for that project.
-3. Enable the Cloud Vision API.
-4. Install and initialize the `gcloud` CLI.
-5. Create local Application Default Credentials:
+## Local Asset Storage & Bundle Impact
 
-   ```bash
-   gcloud auth application-default login
-   ```
+All Tesseract JS, WASM, and language assets are stored locally under the `public/tesseract/` directory:
 
-6. If required, set the ADC quota project:
+- **Library Core**: `public/tesseract/tesseract.esm.min.js` (67 kB)
+- **Web Worker**: `public/tesseract/worker.min.js` (124 kB)
+- **WASM Cores**:
+  - Standard LSTM Core: `tesseract-core-lstm.wasm.js` (3.94 MB) & `tesseract-core-lstm.wasm` (2.86 MB)
+  - SIMD LSTM Core: `tesseract-core-simd-lstm.wasm.js` (3.94 MB) & `tesseract-core-simd-lstm.wasm` (2.86 MB)
+  - Standard non-LSTM Core: `tesseract-core.wasm.js` (4.73 MB) & `tesseract-core.wasm` (3.46 MB)
+  - SIMD non-LSTM Core: `tesseract-core-simd.wasm.js` (4.74 MB) & `tesseract-core-simd.wasm` (3.46 MB)
+- **Language Models**: Stored under `public/tesseract/lang/` using optimized `tessdata_fast` weights:
+  - English (`eng.traineddata` — 4.11 MB)
+  - Japanese (`jpn.traineddata` — 2.47 MB & `jpn_vert.traineddata` — 3.04 MB)
+  - Korean (`kor.traineddata` — 1.68 MB)
+  - Chinese Simplified (`chi_sim.traineddata` — 2.47 MB)
 
-   ```bash
-   gcloud auth application-default set-quota-project PROJECT_ID
-   ```
+**Total Extension Bundle Size**: Approximately **44.36 MB**.
 
-7. Install dependencies:
+---
 
-   ```bash
-   pnpm install --frozen-lockfile
-   ```
+## Timeouts & Safeguards
 
-8. Start the opt-in backend on macOS or Linux:
+- **Unified Deadline**: The complete local OCR operation operates under a single **28-second deadline**.
+- **Timing Allocations**: Each step (worker initialization and individual recognition crop loops) consumes the *remaining time* of the total deadline rather than receiving fresh allowances.
+- **Late Worker Termination**: If a cancellation (abort or timeout) is triggered while worker initialization is pending, a callback observer ensures that when the promise eventually resolves in the background, `worker.terminate()` is called immediately to prevent thread leaks.
 
-   ```bash
-   MANGALENS_ENABLE_GOOGLE_VISION=true pnpm dev:backend
-   ```
+---
 
-   On Windows PowerShell:
+## Testing Local OCR
 
-   ```powershell
-   $env:MANGALENS_ENABLE_GOOGLE_VISION="true"
-   pnpm dev:backend
-   ```
-
-9. In another terminal, start the extension:
-
-   ```bash
-   pnpm dev
-   ```
-
-10. Open `chrome://extensions`, enable Developer mode, choose **Load unpacked**,
-   and select `.output/chrome-mv3`.
-11. Open a page containing readable Japanese, Korean, Chinese, or other text.
-12. Click **Scan Manga Page** and make one detected page fully visible.
-13. Click **OCR via Dev API**.
-14. Confirm editable OCR regions appear and the popup says translation is not
-    enabled.
-
-The backend binds only to `127.0.0.1:8787`. `GET /health` reports only safe,
-injected provider metadata: provider ID, local/remote execution, and whether it
-is enabled. It never reports credential, account, quota-project, or token state.
-
-## Development commands
+### Automated Tests
+Verify all coordinate bounds, CCA binarization, reading order sorting, concurrency locks, timeout deadlines, and late worker termination:
 
 ```bash
 pnpm install --frozen-lockfile
 pnpm compile
 pnpm test
 pnpm build
-pnpm dev:backend
-pnpm dev
-pnpm fixture
 ```
 
-## Extension permissions
-
-Normal permissions remain exactly:
-
-- `storage`
-- `activeTab`
-- `scripting`
-
-Host permissions remain exactly:
-
-- `http://127.0.0.1:8787/*`
-
-The extension has no permission for Google domains. `google-auth-library` and
-all Google provider files are development-backend-only and are not bundled into
-the Chrome output.
-
-## Current limitations
-
-- OCR preview supports only one detected image fully visible in the viewport.
-- Pages taller or wider than the viewport are not stitched or automatically
-  scrolled.
-- OCR quality may vary on stylized manga lettering and low-resolution text.
-- Vertical text is not specially reordered.
-- Complex manga reading order is not inferred.
-- Paragraph rectangles are axis-aligned bounds around Google's quadrilaterals;
-  speech bubbles themselves are not detected.
-- OCR text is editable for the current tab session only.
-- No real translation, AI translation, inpainting, persistence, account,
-  billing, analytics, or production backend exists.
-
-The next milestone should benchmark and add local-first OCR while retaining
-Google Vision only as an explicitly enabled comparison and difficult-page
-fallback. Real translation remains a later, separately reviewed milestone.
+### Manual Steps in Google Chrome
+1. Start the capture fixture server:
+   ```bash
+   pnpm fixture
+   ```
+2. Build the extension:
+   ```bash
+   pnpm build
+   ```
+3. Load the unpacked extension from `.output/chrome-mv3` in Google Chrome.
+4. Open the fixture page (`http://127.0.0.1:4173/`).
+5. Trigger translation via the extension and verify local OCR placements.

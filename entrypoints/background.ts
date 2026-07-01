@@ -4,7 +4,7 @@ import {
 } from "@/lib/capture/capture-coordinator";
 import { BrowserScreenshotCropper } from "@/lib/capture/screenshot-cropper";
 import { initializeDefaultSettings } from "@/lib/storage";
-import { LocalDeterministicTranslationService } from "@/lib/translation/local-deterministic-translation-service";
+import { LocalOcrTranslationService } from "@/lib/translation/local-ocr-translation-service";
 import {
   TranslationCoordinator,
   createBackgroundTranslationMessageHandler,
@@ -35,7 +35,7 @@ export default defineBackground(() => {
     captureImage: (request, signal) =>
       coordinator.captureImageForInternalUse(request, signal),
     services: {
-      "local-demo": new LocalDeterministicTranslationService(),
+      "local-demo": new LocalOcrTranslationService(),
       "development-api": new HttpTranslationService({
         endpoint: DEV_TRANSLATION_API_URL,
         fetchImpl: fetch,
