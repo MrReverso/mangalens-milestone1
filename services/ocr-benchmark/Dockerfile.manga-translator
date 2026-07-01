@@ -20,8 +20,8 @@ RUN pip install --no-cache-dir \
     pillow \
     psutil \
     opencv-python-headless \
-    torch>=2.0.0 \
-    torchvision>=0.15.0 \
+    "torch>=2.0.0" \
+    "torchvision>=0.15.0" \
     manga-ocr==0.1.14 \
     git+https://github.com/zyddnys/manga-image-translator.git@efdc229de8aa0f3d4051ad97664adc62dd5ac605
 

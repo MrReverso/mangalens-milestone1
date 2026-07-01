@@ -38,7 +38,11 @@
           },
           "text": "\ubb34\uc5c7\uc744\uc694?",
           "confidence": 0.95,
-          "orientation": "horizontal"
+          "orientation": "horizontal",
+          "detector": "mock-detector",
+          "recognizer": "mock-recognizer",
+          "detectorVersion": "0.1.0",
+          "recognizerVersion": "0.1.0"
         },
         {
           "id": "region_2",
@@ -70,14 +74,22 @@
           },
           "text": "\uc9c0\uae08 \ucd9c\ubc1c\ud574\uc57c \ud569\ub2c8\ub2e4.",
           "confidence": 0.88,
-          "orientation": "vertical"
+          "orientation": "vertical",
+          "detector": "mock-detector",
+          "recognizer": "mock-recognizer",
+          "detectorVersion": "0.1.0",
+          "recognizerVersion": "0.1.0"
         }
       ],
       "errors": [],
       "processingTimeMs": 15,
       "imageWidth": 800,
       "imageHeight": 1200,
-      "annotatedPath": "./results/demo/annotated_manga-image-translator-default_dummy_manga_page.png"
+      "annotatedPath": "./results/demo/annotated_manga-image-translator-default_dummy_manga_page.png",
+      "detector": "mock-detector",
+      "recognizer": "mock-recognizer",
+      "detectorVersion": "0.1.0",
+      "recognizerVersion": "0.1.0"
     }
   }
 }
