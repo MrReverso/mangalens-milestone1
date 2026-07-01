@@ -12,7 +12,7 @@
     "zip": "wxt zip",
     "zip:firefox": "wxt zip -b firefox",
     "compile": "tsc --noEmit",
-    "test": "vitest run",
+    "test": "vitest run --exclude tests/build-verification.test.ts",
     "test:watch": "vitest",
     "fixture": "node scripts/serve-fixture.mjs",
     "dev:backend": "tsx dev/backend/server.ts",

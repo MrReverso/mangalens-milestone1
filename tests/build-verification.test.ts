@@ -2,6 +2,29 @@ import { describe, expect, it } from "vitest";
 import fs from "node:fs";
 import path from "node:path";
 
+function scanDirectory(dir: string, bannedDomains: string[]) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(dir, entry.name);
+
+    if (entry.isDirectory()) {
+      scanDirectory(fullPath, bannedDomains);
+    } else if (entry.isFile()) {
+      const ext = path.extname(entry.name);
+      // Only scan text-like files (js, html, json, css)
+      if ([".js", ".html", ".json", ".css"].includes(ext)) {
+        const content = fs.readFileSync(fullPath, "utf-8");
+        for (const domain of bannedDomains) {
+          if (content.includes(domain)) {
+            throw new Error(`Production file references remote Tesseract CDN/resource: ${fullPath} contains ${domain}`);
+          }
+        }
+      }
+    }
+  }
+}
+
 describe("WXT Build Output Verification", () => {
   const outputDir = path.resolve(__dirname, "../.output/chrome-mv3");
 
@@ -36,7 +59,7 @@ describe("WXT Build Output Verification", () => {
     }
   });
 
-  it("parses offscreen.html and verifies its referenced compiled script exists", () => {
+  it("parses offscreen.html and verifies its referenced compiled script exists and is configured locally", () => {
     const htmlPath = path.join(outputDir, "offscreen.html");
     expect(fs.existsSync(htmlPath)).toBe(true);
 
@@ -45,7 +68,7 @@ describe("WXT Build Output Verification", () => {
     expect(scriptSrcMatch).not.toBeNull();
 
     const scriptSrc = scriptSrcMatch![1];
-    // Resolve relative to output directory (or offscreen.html parent)
+    // Resolve relative to output directory
     const scriptPath = path.resolve(outputDir, scriptSrc.startsWith("/") ? scriptSrc.slice(1) : scriptSrc);
     expect(fs.existsSync(scriptPath)).toBe(true);
 
@@ -54,6 +77,9 @@ describe("WXT Build Output Verification", () => {
     expect(scriptContent).toContain("workerPath");
     expect(scriptContent).toContain("corePath");
     expect(scriptContent).toContain("langPath");
+
+    // Do not allow local development backend URL to appear in the local OCR worker/offscreen bundle
+    expect(scriptContent).not.toContain("127.0.0.1:8787");
   });
 
   it("verifies manifest.json parameters strictly", () => {
@@ -80,5 +106,17 @@ describe("WXT Build Output Verification", () => {
         expect(host).not.toContain("google.com");
       }
     }
+  });
+
+  it("recursively verifies that no production files contain remote Tesseract CDN or resource domains", () => {
+    const bannedDomains = [
+      "cdn.jsdelivr.net",
+      "unpkg.com",
+      "tessdata.projectnaptha.com",
+      "raw.githubusercontent.com",
+      "naptha.github.io"
+    ];
+
+    scanDirectory(outputDir, bannedDomains);
   });
 });
