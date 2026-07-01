@@ -6,11 +6,8 @@ describe("WXT Build Output Verification", () => {
   const outputDir = path.resolve(__dirname, "../.output/chrome-mv3");
 
   it("verifies the build artifacts and structure exists", () => {
-    // Only run if the build output exists (e.g. after pnpm build)
-    if (!fs.existsSync(outputDir)) {
-      console.warn("Build output directory does not exist. Skipping verification tests. Run pnpm build first.");
-      return;
-    }
+    // Ensure the build output directory exists. If not, this must fail.
+    expect(fs.existsSync(outputDir)).toBe(true);
 
     const files = [
       "manifest.json",
@@ -39,9 +36,29 @@ describe("WXT Build Output Verification", () => {
     }
   });
 
+  it("parses offscreen.html and verifies its referenced compiled script exists", () => {
+    const htmlPath = path.join(outputDir, "offscreen.html");
+    expect(fs.existsSync(htmlPath)).toBe(true);
+
+    const htmlContent = fs.readFileSync(htmlPath, "utf-8");
+    const scriptSrcMatch = htmlContent.match(/<script[^>]+src=["']([^"']+)["']/);
+    expect(scriptSrcMatch).not.toBeNull();
+
+    const scriptSrc = scriptSrcMatch![1];
+    // Resolve relative to output directory (or offscreen.html parent)
+    const scriptPath = path.resolve(outputDir, scriptSrc.startsWith("/") ? scriptSrc.slice(1) : scriptSrc);
+    expect(fs.existsSync(scriptPath)).toBe(true);
+
+    // Verify that this compiled offscreen script contains local asset configurations
+    const scriptContent = fs.readFileSync(scriptPath, "utf-8");
+    expect(scriptContent).toContain("workerPath");
+    expect(scriptContent).toContain("corePath");
+    expect(scriptContent).toContain("langPath");
+  });
+
   it("verifies manifest.json parameters strictly", () => {
     const manifestPath = path.join(outputDir, "manifest.json");
-    if (!fs.existsSync(manifestPath)) return;
+    expect(fs.existsSync(manifestPath)).toBe(true);
 
     const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
 
@@ -64,6 +81,4 @@ describe("WXT Build Output Verification", () => {
       }
     }
   });
-
 });
-

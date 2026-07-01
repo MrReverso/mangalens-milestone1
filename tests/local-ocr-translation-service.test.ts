@@ -467,5 +467,104 @@ describe("LocalOcrTranslationService", () => {
 
       expect(chrome.offscreen.createDocument).toHaveBeenCalledOnce();
     });
+
+    it("rolls back scan count when offscreen document creation fails, allowing later scans to close successfully", async () => {
+      // Mock creation to fail
+      vi.mocked(chrome.offscreen.createDocument).mockRejectedValueOnce(new Error("Creation failed"));
+
+      const service = new LocalOcrTranslationService(0);
+
+      // Trigger first scan (will fail)
+      await expect(
+        service.translate({
+          image: new Blob(["pixels"], { type: "image/png" }),
+          metadata: metadata(),
+        }, new AbortController().signal)
+      ).rejects.toThrow("ocr-unavailable"); // mapped error
+
+      // Verify closeDocument was not called (creation never succeeded)
+      expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
+
+      // Mock next creation to succeed
+      vi.mocked(chrome.runtime.sendMessage as any).mockResolvedValue({ success: true, result: "Success" });
+
+      // Trigger second scan (will succeed)
+      const response = await service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
+
+      expect(response).toBe("Success");
+      // Verify closeDocument is successfully called now because activeScansCount was correctly rolled back to 0
+      expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
+    });
+
+    it("cleans up correctly when concurrent starts fail, and does not let count become negative", async () => {
+      // Mock creation to fail for the concurrent starts
+      vi.mocked(chrome.offscreen.createDocument).mockRejectedValue(new Error("Concurrent creation failed"));
+
+      const service = new LocalOcrTranslationService(0);
+
+      // Trigger two concurrent scans (both will fail creation)
+      const promise1 = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
+
+      const promise2 = service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
+
+      await expect(promise1).rejects.toThrow("ocr-unavailable");
+      await expect(promise2).rejects.toThrow("ocr-unavailable");
+
+      // Verify close was never called
+      expect(chrome.offscreen.closeDocument).not.toHaveBeenCalled();
+
+      // Clear mock state
+      vi.mocked(chrome.offscreen.createDocument).mockClear();
+      vi.mocked(chrome.offscreen.createDocument).mockResolvedValue(undefined);
+      vi.mocked(chrome.runtime.sendMessage as any).mockResolvedValue({ success: true, result: "Later Success" });
+
+      // Run a later scan and ensure it still creates and closes successfully (active count is 0, not corrupted or negative)
+      const response = await service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
+
+      expect(response).toBe("Later Success");
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledOnce();
+      expect(chrome.offscreen.closeDocument).toHaveBeenCalledOnce();
+    });
+
+    it("falls back to clients.matchAll when getContexts is undefined", async () => {
+      // Remove getContexts from chrome.runtime mock
+      delete (chrome.runtime as any).getContexts;
+
+      // Mock clients.matchAll
+      const mockMatchAll = vi.fn().mockResolvedValue([]);
+      (globalThis as any).clients = {
+        matchAll: mockMatchAll,
+      };
+
+      vi.mocked(chrome.runtime.sendMessage as any).mockResolvedValue({ success: true, result: "Fallback success" });
+
+      const service = new LocalOcrTranslationService(0);
+      const response = await service.translate({
+        image: new Blob(["pixels"], { type: "image/png" }),
+        metadata: metadata(),
+      }, new AbortController().signal);
+
+      expect(response).toBe("Fallback success");
+      expect(mockMatchAll).toHaveBeenCalledWith({
+        includeUncontrolled: true,
+        type: "window",
+      });
+      expect(chrome.offscreen.createDocument).toHaveBeenCalledOnce();
+
+      // Clean up clients mock
+      delete (globalThis as any).clients;
+    });
   });
 });

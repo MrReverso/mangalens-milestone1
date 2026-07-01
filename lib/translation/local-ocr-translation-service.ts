@@ -233,7 +233,13 @@ async function registerScanStart(): Promise<void> {
     await offscreenClosePromise;
   }
   activeScansCount++;
-  await ensureOffscreenDocument();
+  try {
+    await ensureOffscreenDocument();
+  } catch (error) {
+    activeScansCount--;
+    if (activeScansCount < 0) activeScansCount = 0;
+    throw error;
+  }
 }
 
 async function registerScanEnd(): Promise<void> {
@@ -261,19 +267,32 @@ async function ensureOffscreenDocument(): Promise<void> {
   }
 
   offscreenCreationPromise = (async () => {
-    const offscreenUrl = 'offscreen.html';
+    const offscreenUrl = chrome.runtime.getURL('offscreen.html');
     if (typeof chrome.runtime.getContexts === 'function') {
       const contexts = await chrome.runtime.getContexts({
         contextTypes: ['OFFSCREEN_DOCUMENT' as any]
       });
-      const exists = contexts.some((c) => c.documentUrl?.endsWith(offscreenUrl));
+      const exists = contexts.some((c) => c.documentUrl === offscreenUrl);
+      if (exists) {
+        return;
+      }
+    } else if (
+      typeof globalThis !== 'undefined' &&
+      (globalThis as any).clients &&
+      typeof (globalThis as any).clients.matchAll === 'function'
+    ) {
+      const clients = await (globalThis as any).clients.matchAll({
+        includeUncontrolled: true,
+        type: 'window',
+      });
+      const exists = clients.some((c: any) => c.url === offscreenUrl);
       if (exists) {
         return;
       }
     }
     
     await chrome.offscreen.createDocument({
-      url: offscreenUrl,
+      url: 'offscreen.html',
       reasons: ['WORKERS' as any],
       justification: 'Run local Tesseract OCR in a dedicated worker.'
     });
@@ -393,7 +412,11 @@ implements TranslationService {
       const base64 = btoa(binary);
       const dataUrl = `data:${input.image.type};base64,${base64}`;
 
-      await registerScanStart();
+      try {
+        await registerScanStart();
+      } catch (error) {
+        throw new Error("ocr-unavailable");
+      }
 
       let onAbort: () => void;
       let timer: any;

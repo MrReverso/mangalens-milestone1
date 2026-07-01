@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "fixture": "node scripts/serve-fixture.mjs",
     "dev:backend": "tsx dev/backend/server.ts",
+    "verify:build": "vitest run tests/build-verification.test.ts",
     "postinstall": "wxt prepare"
   },
   "dependencies": {
