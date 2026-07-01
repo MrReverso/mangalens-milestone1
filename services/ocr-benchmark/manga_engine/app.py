@@ -5,7 +5,8 @@ import cv2
 import numpy as np
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
-import importlib.metadata
+MANGA_TRANSLATOR_VERSION = "0.1.0"
+MANGA_TRANSLATOR_COMMIT = "efdc229de8aa0f3d4051ad97664adc62dd5ac605"
 
 # Import manga-image-translator modules
 from manga_translator.config import Detector, Ocr, DetectorConfig, OcrConfig
@@ -25,7 +26,11 @@ def get_optimal_device() -> str:
 
 @app.get("/health")
 def health():
-    return {"status": "healthy"}
+    return {
+        "status": "healthy",
+        "engineVersion": MANGA_TRANSLATOR_VERSION,
+        "engineCommit": MANGA_TRANSLATOR_COMMIT
+    }
 
 @app.post("/detect")
 async def detect(
@@ -54,12 +59,13 @@ async def detect(
         
         # If mock detector environment flag is active, return a mock bounding box matching the synthetic test fixture
         if os.environ.get("OCR_BENCHMARK_MOCK_DETECTOR") == "true" and detector in ["ctd", "dbconvnext", "default"]:
-            version_str = importlib.metadata.version("manga-image-translator")
             return {
                 "width": width,
                 "height": height,
                 "detector": detector,
-                "detectorVersion": version_str,
+                "detectorVersion": MANGA_TRANSLATOR_VERSION,
+                "engineVersion": MANGA_TRANSLATOR_VERSION,
+                "engineCommit": MANGA_TRANSLATOR_COMMIT,
                 "regions": [
                     {
                         "id": "region_1",
@@ -105,12 +111,13 @@ async def detect(
                 "detectorInferenceRan": True
             })
             
-        version_str = importlib.metadata.version("manga-image-translator")
         return {
             "width": width,
             "height": height,
             "detector": detector,
-            "detectorVersion": version_str,
+            "detectorVersion": MANGA_TRANSLATOR_VERSION,
+            "engineVersion": MANGA_TRANSLATOR_VERSION,
+            "engineCommit": MANGA_TRANSLATOR_COMMIT,
             "regions": regions_list,
             "errors": []
         }
@@ -121,7 +128,9 @@ async def detect(
                 "width": 0,
                 "height": 0,
                 "detector": detector,
-                "detectorVersion": "",
+                "detectorVersion": MANGA_TRANSLATOR_VERSION,
+                "engineVersion": MANGA_TRANSLATOR_VERSION,
+                "engineCommit": MANGA_TRANSLATOR_COMMIT,
                 "regions": [],
                 "errors": [str(e), traceback.format_exc()]
             }
@@ -187,13 +196,17 @@ async def recognize_japanese(
             
         return {
             "regions": result_regions,
-            "errors": []
+            "errors": [],
+            "engineVersion": MANGA_TRANSLATOR_VERSION,
+            "engineCommit": MANGA_TRANSLATOR_COMMIT
         }
     except Exception as e:
         return JSONResponse(
             status_code=500,
             content={
                 "regions": [],
-                "errors": [str(e), traceback.format_exc()]
+                "errors": [str(e), traceback.format_exc()],
+                "engineVersion": MANGA_TRANSLATOR_VERSION,
+                "engineCommit": MANGA_TRANSLATOR_COMMIT
             }
         )

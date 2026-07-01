@@ -3,7 +3,6 @@ import os
 import sys
 import hashlib
 import tempfile
-from importlib.metadata import distribution, PackageNotFoundError
 
 TARGET_LINE = "from .manga_translator import *\n"
 
@@ -134,25 +133,13 @@ def main():
     # 1. Run local tests
     test_patch_init_file()
     
-    # 2. Patch the actual installed distribution
-    dist_name = "manga-image-translator"
-    print(f"\nLocating distribution '{dist_name}'...")
-    try:
-        dist = distribution(dist_name)
-    except PackageNotFoundError:
-        print(f"CRITICAL: Installed distribution '{dist_name}' cannot be found.")
+    # 2. Parse command line target path
+    if len(sys.argv) < 2:
+        print("CRITICAL: Target path to __init__.py must be provided as an argument.")
         sys.exit(1)
         
-    installed_version = dist.version
-    init_relative_path = "manga_translator/__init__.py"
-    
-    init_path = dist.locate_file(init_relative_path)
-    if not init_path:
-        print(f"CRITICAL: Relative path '{init_relative_path}' could not be resolved by distribution.")
-        sys.exit(1)
-        
-    init_path_str = os.path.abspath(str(init_path))
-    print(f"Resolved __init__.py absolute path: {init_path_str}")
+    init_path_str = os.path.abspath(sys.argv[1])
+    print(f"Target path for patching: {init_path_str}")
     
     if not os.path.exists(init_path_str):
         print(f"CRITICAL: File {init_path_str} does not exist on disk.")
@@ -161,9 +148,7 @@ def main():
     try:
         sha_b, sha_a, removed = patch_init_file(init_path_str)
         print("\n=== PATCH SUCCESSFUL ===")
-        print(f"Distribution Name: {dist_name}")
-        print(f"Installed Version: {installed_version}")
-        print(f"Resolved Path:     {init_path_str}")
+        print(f"Target Path:       {init_path_str}")
         print(f"SHA-256 Before:    {sha_b}")
         print(f"SHA-256 After:     {sha_a}")
         print(f"Exact Removed Line: {repr(removed)}")
