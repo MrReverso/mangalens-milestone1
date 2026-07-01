@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang='en'>
+<head>
+  <meta charset='UTF-8'>
+  <title>Manga Lens OCR Benchmark Comparison View</title>
+  <style>
+    body { font-family: 'Inter', -apple-system, sans-serif; background: #0f172a; color: #f8fafc; margin: 0; padding: 20px; }
+    h1 { color: #38bdf8; text-align: center; margin-bottom: 30px; }
+    .comparison-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 15px; margin-bottom: 40px; border-bottom: 2px solid #334155; padding-bottom: 45px; }
+    .column-header { font-weight: bold; font-size: 1.1rem; text-align: center; background: #1e293b; padding: 10px; border-radius: 8px; border: 1px solid #475569; }
+    .image-card { background: #1e293b; border-radius: 12px; border: 1px solid #334155; padding: 10px; display: flex; flex-direction: column; }
+    .image-card img { width: 100%; border-radius: 8px; cursor: pointer; object-fit: contain; max-height: 500px; }
+    .meta-box { margin-top: 10px; font-size: 0.85rem; line-height: 1.4; }
+    .text-list { background: #0f172a; padding: 8px; border-radius: 6px; margin-top: 8px; max-height: 150px; overflow-y: auto; font-family: monospace; font-size: 0.8rem; }
+    .status-badge { display: inline-block; padding: 2px 6px; border-radius: 4px; font-size: 0.75rem; font-weight: bold; }
+    .status-success { background: #15803d; color: #bbf7d0; }
+    .status-no_text { background: #b45309; color: #fef3c7; }
+    .status-failed { background: #b91c1c; color: #fee2e2; }
+    .status-unavailable { background: #475569; color: #f1f5f9; }
+    .review-template-container { background: #1e293b; border: 1px dashed #38bdf8; border-radius: 12px; padding: 20px; margin-top: 40px; }
+    .review-template-title { font-size: 1.2rem; color: #38bdf8; margin-bottom: 10px; }
+    pre { background: #0f172a; padding: 15px; border-radius: 8px; overflow-x: auto; font-size: 0.9rem; border: 1px solid #334155; }
+  </style>
+</head>
+<body>
+  <h1>Manga Lens OCR Benchmark Comparison View</h1>
+  <h2>Image: dummy_manga_page.png</h2>
+  <div class='comparison-grid'>
+    <div>
+      <div class='column-header'>Original Image</div>
+      <div class='image-card'>
+        <img src='dummy_manga_page.png' alt='Original Image'>
+      </div>
+    </div>
+    <div>
+      <div class='column-header'>manga-image-translator-default</div>
+      <div class='image-card'>
+        <img src='annotated_manga-image-translator-default_dummy_manga_page.png' alt='manga-image-translator-default annotated'>
+        <div class='meta-box'>
+          Status: <span class='status-badge status-success'>success</span><br>
+          Time: 15ms<br>
+          Regions: 2<br>
+          CPU memory: 0 MB<br>
+          GPU memory: 0 MB<br>
+          Detector: mock-detector (0.1.0)<br>
+          Recognizer: mock-recognizer (0.1.0)<br>
+        </div>
+        <div class='text-list'>
+[region_1] 무엇을요? (95%)<br>
+[region_2] 지금 출발해야 합니다. (88%)<br>
+        </div>
+      </div>
+    </div>
+    <div>
+      <div class='column-header'>manga-image-translator-ctd</div>
+      <div class='image-card'><p>Engine not executed</p></div>
+    </div>
+    <div>
+      <div class='column-header'>dbnet-mangaocr-paddleocr</div>
+      <div class='image-card'><p>Engine not executed</p></div>
+    </div>
+    <div>
+      <div class='column-header'>paddleocr-standalone</div>
+      <div class='image-card'><p>Engine not executed</p></div>
+    </div>
+  </div>
+  <div class='review-template-container'>
+    <div class='review-template-title'>Manual Review JSON Template</div>
+    <p>Please copy the template below, fill out the metrics for each image and pipeline based on visual inspection, and save it as a manual review report:</p>
+    <pre>{
+  "manualReview": [
+    {
+      "imageName": "example_page.png",
+      "pipeline": "manga-image-translator-ctd",
+      "expectedTextRegionCount": 0,
+      "detectedTruePositives": 0,
+      "falsePositives": 0,
+      "missedRegions": 0,
+      "unreadableRegions": 0,
+      "notes": ""
+    }
+  ]
+}</pre>
+  </div>
+</body>
+</html>

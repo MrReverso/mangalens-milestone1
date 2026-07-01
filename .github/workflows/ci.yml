@@ -20,3 +20,58 @@ jobs:
       - run: pnpm compile
       - run: pnpm test
       - run: pnpm build
+
+  ocr-benchmark-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Create results directory
+        run: mkdir -p services/ocr-benchmark/results/ci
+      - name: Build manga-engine image
+        run: |
+          set -o pipefail
+          docker build --no-cache --progress=plain -t ocr-benchmark-manga-engine -f services/ocr-benchmark/manga_engine/Dockerfile services/ocr-benchmark/manga_engine 2>&1 | tee services/ocr-benchmark/results/ci/manga_engine_build.log
+      - name: Assert manga-engine image exists
+        run: |
+          docker image inspect ocr-benchmark-manga-engine > /dev/null
+      - name: Run pip check (manga-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-manga-engine -m pip check
+      - name: Run source-import verification (manga-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-manga-engine verify_source_imports.py
+      - name: Run import-closure verification (manga-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-manga-engine verify_import_closure.py
+      - name: Run import/registry health check (manga-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-manga-engine verify_manga_registry.py
+      - name: Build paddle-engine image
+        run: |
+          docker build -t ocr-benchmark-paddle-engine -f services/ocr-benchmark/paddle_engine/Dockerfile services/ocr-benchmark/paddle_engine
+      - name: Run pip check (paddle-engine)
+        run: |
+          docker run --entrypoint python ocr-benchmark-paddle-engine -m pip check
+      - name: Run PaddleOCR runtime inference (paddle-engine)
+        run: |
+          set -o pipefail
+          docker run --entrypoint python ocr-benchmark-paddle-engine verify_paddle_inference.py 2>&1 | tee services/ocr-benchmark/results/ci/paddle_inference.log
+      - name: Start Docker Compose and execute Orchestrator integration tests
+        run: |
+          cd services/ocr-benchmark
+          OCR_BENCHMARK_MOCK_DETECTOR=true OCR_BENCHMARK_STRICT_E2E=true docker compose up --build --exit-code-from benchmark-orchestrator
+      - name: Shut down services and dump logs
+        if: always()
+        run: |
+          cd services/ocr-benchmark
+          set -o pipefail
+          docker compose logs 2>&1 | tee results/ci/docker_compose_logs.log
+          docker compose down
+      - name: Upload CI evidence artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ocr-benchmark-ci-evidence
+          path: services/ocr-benchmark/results/ci/**
