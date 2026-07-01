@@ -31,7 +31,11 @@ jobs:
         run: mkdir -p services/ocr-benchmark/results/ci
       - name: Build manga-engine image
         run: |
+          set -o pipefail
           docker build --no-cache --progress=plain -t ocr-benchmark-manga-engine -f services/ocr-benchmark/manga_engine/Dockerfile services/ocr-benchmark/manga_engine 2>&1 | tee services/ocr-benchmark/results/ci/manga_engine_build.log
+      - name: Assert manga-engine image exists
+        run: |
+          docker image inspect ocr-benchmark-manga-engine > /dev/null
       - name: Run pip check (manga-engine)
         run: |
           docker run --entrypoint python ocr-benchmark-manga-engine -m pip check
@@ -46,6 +50,7 @@ jobs:
           docker run --entrypoint python ocr-benchmark-paddle-engine -m pip check
       - name: Run PaddleOCR runtime inference (paddle-engine)
         run: |
+          set -o pipefail
           docker run --entrypoint python ocr-benchmark-paddle-engine verify_paddle_inference.py 2>&1 | tee services/ocr-benchmark/results/ci/paddle_inference.log
       - name: Start Docker Compose and execute Orchestrator integration tests
         run: |
@@ -55,6 +60,7 @@ jobs:
         if: always()
         run: |
           cd services/ocr-benchmark
+          set -o pipefail
           docker compose logs 2>&1 | tee results/ci/docker_compose_logs.log
           docker compose down
       - name: Upload CI evidence artifacts

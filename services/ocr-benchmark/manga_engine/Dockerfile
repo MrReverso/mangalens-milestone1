@@ -26,6 +26,16 @@ RUN python -m pip check
 # Print installed dependencies for GHA build log traceability
 RUN python -m pip freeze
 
+# Copy patch script and patch package root to remove full application dependency overhead
+COPY patch_manga_package.py .
+RUN python patch_manga_package.py
+
+# Verify the patched OCR-only import closure individually
+RUN python -c "import manga_translator.config; print('config OK')"
+RUN python -c "import manga_translator.utils; print('utils OK')"
+RUN python -c "import manga_translator.detection; print('detection OK')"
+RUN python -c "import manga_translator.ocr; print('ocr OK')"
+
 # Verify registries are present and import correctly
 COPY verify_manga_registry.py .
 RUN python verify_manga_registry.py
