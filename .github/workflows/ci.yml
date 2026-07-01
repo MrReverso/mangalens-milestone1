@@ -29,6 +29,13 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
+      - name: Cache PaddleOCR models
+        uses: actions/cache@v4
+        with:
+          path: ~/.paddleocr
+          key: ${{ runner.os }}-paddle-models-${{ hashFiles('services/ocr-benchmark/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-paddle-models-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -40,7 +47,11 @@ jobs:
         run: |
           python -m py_compile services/ocr-benchmark/benchmark.py
           python -m py_compile services/ocr-benchmark/test_smoke.py
-      - name: Run smoke tests
+      - name: Run strict engine checks
+        run: |
+          cd services/ocr-benchmark
+          python3 benchmark.py --check-engines paddle,ctd,dbconvnext,default
+      - name: Run runtime smoke tests
         run: |
           cd services/ocr-benchmark
           python3 test_smoke.py
