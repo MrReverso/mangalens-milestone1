@@ -4,112 +4,118 @@ import sys
 import hashlib
 import tempfile
 
-TARGET_LINE = "from .manga_translator import *\n"
+def get_file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        h.update(f.read())
+    return h.hexdigest()
 
-def patch_init_file(init_path: str) -> tuple[str, str, str]:
-    if not os.path.exists(init_path):
-        raise FileNotFoundError(f"File {init_path} does not exist.")
-        
-    # Calculate sha256 before patching
-    sha_before = hashlib.sha256()
-    with open(init_path, "rb") as f:
-        content_bytes = f.read()
-        sha_before.update(content_bytes)
-    sha_before_hex = sha_before.hexdigest()
+def patch_package_root(init_path: str) -> tuple[str, str, str]:
+    sha_before = get_file_sha256(init_path)
     
-    # Read text content
     with open(init_path, "r", encoding="utf-8") as f:
         lines = f.readlines()
         
-    # Verify exact occurrence count of target wildcard import line
-    occurrences = sum(1 for line in lines if line == TARGET_LINE)
+    target_line = "from .manga_translator import *\n"
+    occurrences = sum(1 for line in lines if line == target_line)
     if occurrences == 0:
-        raise ValueError(f"Wildcard import line '{TARGET_LINE.strip()}' not found in {init_path}.")
+        raise ValueError(f"Wildcard import line '{target_line.strip()}' not found in {init_path}.")
     if occurrences > 1:
-        raise ValueError(f"Wildcard import line '{TARGET_LINE.strip()}' occurs {occurrences} times (expected exactly 1) in {init_path}.")
+        raise ValueError(f"Wildcard import line '{target_line.strip()}' occurs {occurrences} times (expected exactly 1).")
         
-    # Filter out target line
-    new_lines = [line for line in lines if line != TARGET_LINE]
+    new_lines = [line for line in lines if line != target_line]
     
-    # Write back patched content
     with open(init_path, "w", encoding="utf-8") as f:
         f.writelines(new_lines)
         
-    # Calculate sha256 after patching
-    sha_after = hashlib.sha256()
-    with open(init_path, "rb") as f:
-        content_bytes_after = f.read()
-        sha_after.update(content_bytes_after)
-    sha_after_hex = sha_after.hexdigest()
+    sha_after = get_file_sha256(init_path)
     
-    # Read back and assert wildcard line is gone
+    # Assert wildcard line is gone
     with open(init_path, "r", encoding="utf-8") as f:
-        reread_content = f.read()
-    assert TARGET_LINE not in reread_content, "Assertion failed: Wildcard import line still present after patching."
+        content = f.read()
+    assert target_line not in content, "Wildcard line still present after patch."
     
-    return sha_before_hex, sha_after_hex, TARGET_LINE
+    return sha_before, sha_after, target_line
 
-def test_patch_init_file():
+def patch_detection_init(detection_path: str) -> tuple[str, str, str]:
+    sha_before = get_file_sha256(detection_path)
+    
+    with open(detection_path, "r", encoding="utf-8") as f:
+        lines = f.readlines()
+        
+    target_import = "from .paddle_rust import PaddleDetector"
+    target_registry = "Detector.paddle: PaddleDetector,"
+    
+    import_occurrences = sum(1 for line in lines if target_import in line)
+    registry_occurrences = sum(1 for line in lines if target_registry in line)
+    
+    if import_occurrences != 1:
+        raise ValueError(f"Target import '{target_import}' occurs {import_occurrences} times (expected exactly 1) in {detection_path}.")
+    if registry_occurrences != 1:
+        raise ValueError(f"Target registry '{target_registry}' occurs {registry_occurrences} times (expected exactly 1) in {detection_path}.")
+        
+    new_lines = []
+    removed_lines = []
+    for line in lines:
+        if target_import in line or target_registry in line:
+            removed_lines.append(line.strip())
+        else:
+            new_lines.append(line)
+            
+    with open(detection_path, "w", encoding="utf-8") as f:
+        f.writelines(new_lines)
+        
+    sha_after = get_file_sha256(detection_path)
+    
+    # Assert lines are gone
+    with open(detection_path, "r", encoding="utf-8") as f:
+        content = f.read()
+    assert target_import not in content, "Target import still present after patch."
+    assert target_registry not in content, "Target registry still present after patch."
+    
+    return sha_before, sha_after, " | ".join(removed_lines)
+
+# Lightweight unit tests
+def run_unit_tests():
     print("Running patch script tests on temporary fake package...")
     
-    fake_content = (
-        "import colorama\n"
-        "from .manga_translator import *\n"
-        "import dotenv\n"
-    )
-    
-    # Test successful patch
+    # Test Root Init patch
+    fake_init_content = "import colorama\nfrom .manga_translator import *\nimport dotenv\n"
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as tmp:
-        tmp.write(fake_content)
+        tmp.write(fake_init_content)
         tmp_path = tmp.name
-        
     try:
-        sha_b, sha_a, removed = patch_init_file(tmp_path)
-        assert sha_b != sha_a, "Hash did not change after patching"
-        assert removed == TARGET_LINE
-        
+        sb, sa, removed = patch_package_root(tmp_path)
+        assert sb != sa
         with open(tmp_path, "r", encoding="utf-8") as f:
             content = f.read()
+        assert "from .manga_translator import *" not in content
         assert "import colorama\n" in content
-        assert "import dotenv\n" in content
-        assert TARGET_LINE not in content
-        print("  ✓ Test success case OK")
+        print("  ✓ Fake package root init patch OK")
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
             
-    # Test zero occurrences failure
-    fake_content_zero = (
-        "import colorama\n"
-        "import dotenv\n"
+    # Test Detection Init patch
+    fake_det_content = (
+        "from .ctd import ComicTextDetector\n"
+        "from .paddle_rust import PaddleDetector\n"
+        "class Detector:\n"
+        "    Detector.ctd: ComicTextDetector,\n"
+        "    Detector.paddle: PaddleDetector,\n"
     )
     with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as tmp:
-        tmp.write(fake_content_zero)
+        tmp.write(fake_det_content)
         tmp_path = tmp.name
-        
     try:
-        with pytest_raises(ValueError):
-            patch_init_file(tmp_path)
-        print("  ✓ Test zero occurrences fails OK")
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
-            
-    # Test duplicate occurrences failure
-    fake_content_dup = (
-        "import colorama\n"
-        "from .manga_translator import *\n"
-        "import dotenv\n"
-        "from .manga_translator import *\n"
-    )
-    with tempfile.NamedTemporaryFile(mode="w+", suffix=".py", delete=False) as tmp:
-        tmp.write(fake_content_dup)
-        tmp_path = tmp.name
-        
-    try:
-        with pytest_raises(ValueError):
-            patch_init_file(tmp_path)
-        print("  ✓ Test duplicate occurrences fails OK")
+        sb, sa, removed = patch_detection_init(tmp_path)
+        assert sb != sa
+        with open(tmp_path, "r", encoding="utf-8") as f:
+            content = f.read()
+        assert "from .paddle_rust import PaddleDetector" not in content
+        assert "Detector.paddle: PaddleDetector," not in content
+        assert "from .ctd import ComicTextDetector\n" in content
+        print("  ✓ Fake detection init patch OK")
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
@@ -130,28 +136,36 @@ class pytest_raises:
         return True
 
 def main():
-    # 1. Run local tests
-    test_patch_init_file()
+    run_unit_tests()
     
-    # 2. Parse command line target path
     if len(sys.argv) < 2:
-        print("CRITICAL: Target path to __init__.py must be provided as an argument.")
+        print("CRITICAL: Target file path to patch must be provided as an argument.")
         sys.exit(1)
         
-    init_path_str = os.path.abspath(sys.argv[1])
-    print(f"Target path for patching: {init_path_str}")
+    target_path = os.path.abspath(sys.argv[1])
+    print(f"Target path: {target_path}")
     
-    if not os.path.exists(init_path_str):
-        print(f"CRITICAL: File {init_path_str} does not exist on disk.")
+    if not os.path.exists(target_path):
+        print(f"CRITICAL: File {target_path} does not exist.")
         sys.exit(1)
         
+    # Decide patch function based on filename/path content
     try:
-        sha_b, sha_a, removed = patch_init_file(init_path_str)
+        if target_path.endswith("detection/__init__.py") or target_path.endswith("detection/init.py"):
+            print("Applying detection/__init__.py patch (excluding Paddle Rust)...")
+            sb, sa, removed = patch_detection_init(target_path)
+        elif target_path.endswith("__init__.py") or target_path.endswith("init.py"):
+            print("Applying package root __init__.py patch (wildcard import removal)...")
+            sb, sa, removed = patch_package_root(target_path)
+        else:
+            print(f"CRITICAL: Unknown target path structure for patching: {target_path}")
+            sys.exit(1)
+            
         print("\n=== PATCH SUCCESSFUL ===")
-        print(f"Target Path:       {init_path_str}")
-        print(f"SHA-256 Before:    {sha_b}")
-        print(f"SHA-256 After:     {sha_a}")
-        print(f"Exact Removed Line: {repr(removed)}")
+        print(f"Target Path:       {target_path}")
+        print(f"SHA-256 Before:    {sb}")
+        print(f"SHA-256 After:     {sa}")
+        print(f"Exact Removed:     {removed}")
     except Exception as e:
         print(f"CRITICAL: Patch execution failed: {e}")
         sys.exit(1)

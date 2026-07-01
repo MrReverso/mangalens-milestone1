@@ -27,3 +27,4 @@ aiofiles==23.2.1
 arabic-reshaper==3.0.0
 pyhyphen==4.0.3
 colorama==0.4.6
+py3langid==0.2.2

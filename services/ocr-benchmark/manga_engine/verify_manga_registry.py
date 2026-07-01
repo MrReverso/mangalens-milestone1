@@ -54,7 +54,8 @@ def stage_detector_assertions():
     assert Detector.default in DETECTORS, "Detector.default not in DETECTORS"
     assert Detector.ctd in DETECTORS, "Detector.ctd not in DETECTORS"
     assert Detector.dbconvnext in DETECTORS, "Detector.dbconvnext not in DETECTORS"
-    print(f"  Verified detectors: default, ctd, dbconvnext present in registry")
+    assert getattr(Detector, "paddle", None) not in DETECTORS, "Detector.paddle is present in registry (expected excluded)"
+    print(f"  Verified detectors: default, ctd, dbconvnext present, paddle excluded from registry")
 
 def stage_ocr_assertions():
     from manga_translator.config import Ocr

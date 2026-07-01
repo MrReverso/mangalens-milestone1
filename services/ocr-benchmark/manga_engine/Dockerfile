@@ -33,6 +33,7 @@ RUN test -f /opt/manga-image-translator/manga_translator/ocr/__init__.py
 # 2. Patch the source checkout directly
 COPY patch_manga_package.py .
 RUN python patch_manga_package.py /opt/manga-image-translator/manga_translator/__init__.py
+RUN python patch_manga_package.py /opt/manga-image-translator/manga_translator/detection/__init__.py
 
 # 3. Set PYTHONPATH
 ENV PYTHONPATH=/opt/manga-image-translator
@@ -40,6 +41,10 @@ ENV PYTHONPATH=/opt/manga-image-translator
 # 4. Verify source imports
 COPY verify_source_imports.py .
 RUN python verify_source_imports.py
+
+# 5. Verify import closure contains zero rendering/inpainting/translation/paddle_rust modules
+COPY verify_import_closure.py .
+RUN python verify_import_closure.py
 
 # Verify dependencies are correct and do not conflict
 RUN python -m pip check
