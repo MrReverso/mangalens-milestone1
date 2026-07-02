@@ -50,7 +50,12 @@ jobs:
           docker run --entrypoint python ocr-benchmark-manga-engine verify_manga_registry.py
       - name: Build paddle-engine image
         run: |
-          docker build --no-cache --progress=plain -t ocr-benchmark-paddle-engine -f services/ocr-benchmark/paddle_engine/Dockerfile services/ocr-benchmark/paddle_engine
+          set -o pipefail
+          docker build --no-cache --progress=plain \
+            -t ocr-benchmark-paddle-engine \
+            -f services/ocr-benchmark/paddle_engine/Dockerfile \
+            services/ocr-benchmark/paddle_engine \
+            2>&1 | tee services/ocr-benchmark/results/ci/paddle_engine_build.log
       - name: Run pip check (paddle-engine)
         run: |
           docker run --entrypoint python ocr-benchmark-paddle-engine -m pip check

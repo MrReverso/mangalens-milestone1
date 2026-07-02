@@ -27,12 +27,22 @@ def get_paddle_ocr_engine(language: str, det: bool, rec: bool) -> PaddleOCR:
         
     cache_key = (paddle_lang, det, rec)
     if cache_key not in ocr_cache:
+        print(
+            "Before PaddleOCR service initialization: "
+            f"language={paddle_lang}, det={det}, rec={rec}",
+            flush=True,
+        )
         ocr_cache[cache_key] = PaddleOCR(
             use_angle_cls=True,
             lang=paddle_lang,
             show_log=False,
             det=det,
             rec=rec
+        )
+        print(
+            "After PaddleOCR service initialization: "
+            f"language={paddle_lang}, det={det}, rec={rec}",
+            flush=True,
         )
     return ocr_cache[cache_key]
 

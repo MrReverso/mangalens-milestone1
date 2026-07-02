@@ -51,7 +51,9 @@ def main():
         print(f"{label} model path: {matches[-1]}")
     
     # 2. Run standalone Paddle detection and recognition
+    print("Before full PaddleOCR initialization", flush=True)
     ocr_det = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
+    print("After full PaddleOCR initialization", flush=True)
     results = ocr_det.ocr(img_path, cls=True)
     
     print(f"Raw standalone results: {results}")
@@ -84,7 +86,9 @@ def main():
     img_cv = cv2.imread(img_path)
     crop_img = img_cv[100:300, 50:1100]
     
+    print("Before recognition-only PaddleOCR initialization", flush=True)
     ocr_rec = PaddleOCR(use_angle_cls=True, lang="en", show_log=False, det=False, rec=True)
+    print("After recognition-only PaddleOCR initialization", flush=True)
     res_rec = ocr_rec.ocr(crop_img, det=False, rec=True)
     
     print(f"Raw recognition-only results: {res_rec}")
