@@ -2,10 +2,16 @@
 import os
 import sys
 import importlib.metadata
+import glob
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from paddleocr import PaddleOCR
+from result_parser import (
+    describe_result_shape,
+    is_genuine_empty_recognition_result,
+    parse_recognition_result,
+)
 
 def main():
     print("Running real PaddleOCR runtime inference verification...")
@@ -35,6 +41,14 @@ def main():
     # Default model path on linux is usually ~/.paddleocr
     model_dir = os.path.expanduser("~/.paddleocr")
     print(f"PaddleOCR active cache directory: {model_dir}")
+    for label, pattern in {
+        "Detector": os.path.join(model_dir, "whl", "det", "en", "*_det_infer"),
+        "Recognizer": os.path.join(model_dir, "whl", "rec", "en", "*_rec_infer"),
+        "Classifier": os.path.join(model_dir, "whl", "cls", "*_cls_infer"),
+    }.items():
+        matches = sorted(glob.glob(pattern))
+        assert matches, f"{label} model cache missing: {pattern}"
+        print(f"{label} model path: {matches[-1]}")
     
     # 2. Run standalone Paddle detection and recognition
     ocr_det = PaddleOCR(use_angle_cls=True, lang="en", show_log=False)
@@ -74,17 +88,14 @@ def main():
     res_rec = ocr_rec.ocr(crop_img, det=False, rec=True)
     
     print(f"Raw recognition-only results: {res_rec}")
-    assert res_rec is not None, "PaddleOCR rec-only returned None"
-    assert len(res_rec) > 0, "PaddleOCR rec-only returned empty results"
-    
-    # Parse text
-    first_res = res_rec[0]
-    assert len(first_res) > 0, "PaddleOCR rec-only result has empty inner list"
-    rec_text, rec_conf = first_res[0], first_res[1]
+    print(f"Recognition-only response shape: {describe_result_shape(res_rec)}")
+    rec_text, rec_conf = parse_recognition_result(res_rec)
     
     print(f"--- Recognition-Only OCR Result ---")
     print(f"Text: {rec_text}")
     print(f"Confidence: {rec_conf}")
+    print(f"Normalized text: {rec_text}")
+    print(f"Normalized confidence: {rec_conf}")
     
     assert len(rec_text.strip()) > 0, "Recognition-only text is empty"
     upper_rec = rec_text.upper()
@@ -92,6 +103,20 @@ def main():
         f"Recognized text does not contain a meaningful portion of the expected text: '{rec_text}'"
         
     print(f"  ✓ Recognition-only success: '{rec_text}' ({rec_conf:.4f})")
+
+    # Probe the pinned PaddleOCR 2.8.1 recognizer with a blank crop. CI must
+    # confirm the exact sentinel before the service treats it as genuine empty
+    # output; a changed shape is an explicit compatibility failure.
+    blank_crop = np.full((200, 1050, 3), 255, dtype=np.uint8)
+    blank_result = ocr_rec.ocr(blank_crop, det=False, rec=True)
+    print(f"Raw blank recognition-only result: {blank_result}")
+    print(f"Blank recognition-only response shape: {describe_result_shape(blank_result)}")
+    assert is_genuine_empty_recognition_result(blank_result), (
+        "PaddleOCR 2.8.1 blank-output shape changed; update the isolated "
+        "empty-result helper and sentinel tests only after reviewing this "
+        f"observed result: {blank_result!r}"
+    )
+    print("Blank probe produced PaddleOCR 2.8.1 genuine-empty sentinel")
     
     # Clean up
     if os.path.exists(img_path):

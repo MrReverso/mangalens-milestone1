@@ -50,10 +50,14 @@ jobs:
           docker run --entrypoint python ocr-benchmark-manga-engine verify_manga_registry.py
       - name: Build paddle-engine image
         run: |
-          docker build -t ocr-benchmark-paddle-engine -f services/ocr-benchmark/paddle_engine/Dockerfile services/ocr-benchmark/paddle_engine
+          docker build --no-cache --progress=plain -t ocr-benchmark-paddle-engine -f services/ocr-benchmark/paddle_engine/Dockerfile services/ocr-benchmark/paddle_engine
       - name: Run pip check (paddle-engine)
         run: |
           docker run --entrypoint python ocr-benchmark-paddle-engine -m pip check
+      - name: Run Paddle result parser tests
+        run: |
+          set -o pipefail
+          docker run --rm --entrypoint python ocr-benchmark-paddle-engine -m pytest -q test_result_parser.py 2>&1 | tee services/ocr-benchmark/results/ci/paddle_parser_tests.log
       - name: Run PaddleOCR runtime inference (paddle-engine)
         run: |
           set -o pipefail
@@ -61,7 +65,8 @@ jobs:
       - name: Start Docker Compose and execute Orchestrator integration tests
         run: |
           cd services/ocr-benchmark
-          OCR_BENCHMARK_MOCK_DETECTOR=true OCR_BENCHMARK_STRICT_E2E=true docker compose up --build --exit-code-from benchmark-orchestrator
+          docker build -t ocr-benchmark-orchestrator -f orchestrator/Dockerfile orchestrator
+          OCR_BENCHMARK_MOCK_DETECTOR=true OCR_BENCHMARK_STRICT_E2E=true docker compose up --no-build --exit-code-from benchmark-orchestrator
       - name: Shut down services and dump logs
         if: always()
         run: |

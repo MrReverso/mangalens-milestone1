@@ -6,6 +6,10 @@ from typing import List
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import JSONResponse
 from paddleocr import PaddleOCR
+from result_parser import (
+    is_genuine_empty_recognition_result,
+    parse_recognition_result,
+)
 
 app = FastAPI(title="MangaLens OCR - Paddle Engine Service")
 
@@ -33,24 +37,6 @@ def get_paddle_ocr_engine(language: str, det: bool, rec: bool) -> PaddleOCR:
     return ocr_cache[cache_key]
 
 
-def parse_paddle_rec_result(res) -> tuple:
-    if not res:
-        return "", 0.0
-    try:
-        first = res[0]
-        if isinstance(first, list) and len(first) > 0:
-            item = first[0]
-            if isinstance(item, list) or isinstance(item, tuple):
-                return str(item[0]), float(item[1])
-            elif isinstance(item, str):
-                return item, float(first[1]) if len(first) > 1 else 0.0
-        elif isinstance(first, tuple) or isinstance(first, list):
-            return str(first[0]), float(first[1])
-    except Exception:
-        pass
-    return "", 0.0
-
-
 @app.get("/health")
 def health():
     return {"status": "healthy"}
@@ -74,32 +60,63 @@ async def recognize(
                 results.append({
                     "text": "",
                     "confidence": 0.0,
-                    "error": "Failed to decode crop image."
+                    "recognizerInferenceRan": False,
+                    "error": {
+                        "stage": "recognition-inference",
+                        "message": "Failed to decode crop image."
+                    }
                 })
                 continue
-                
+            inference_started = False
             try:
+                inference_started = True
                 res_ocr = engine.ocr(img, det=False, rec=True)
-                text, conf = parse_paddle_rec_result(res_ocr)
-                results.append({
-                    "text": text,
-                    "confidence": conf,
-                    "error": None
-                })
+                if is_genuine_empty_recognition_result(res_ocr):
+                    results.append({
+                        "text": "", "confidence": 0.0, "error": None,
+                        "recognizerInferenceRan": True
+                    })
+                else:
+                    try:
+                        text, conf = parse_recognition_result(res_ocr)
+                        results.append({
+                            "text": text, "confidence": conf, "error": None,
+                            "recognizerInferenceRan": True
+                        })
+                    except ValueError as parse_error:
+                        results.append({
+                            "text": "", "confidence": 0.0,
+                            "recognizerInferenceRan": True,
+                            "error": {
+                                "stage": "recognition-result-parsing",
+                                "message": str(parse_error),
+                                "rawResult": repr(res_ocr)[:2000]
+                            }
+                        })
             except Exception as e:
+                traceback.print_exc()
                 results.append({
                     "text": "",
                     "confidence": 0.0,
-                    "error": f"{str(e)}: {traceback.format_exc()}"
+                    "recognizerInferenceRan": inference_started,
+                    "error": {
+                        "stage": "recognition-inference",
+                        "message": str(e)
+                    }
                 })
                 
         return {"results": results}
     except Exception as e:
+        traceback.print_exc()
         return JSONResponse(
             status_code=500,
             content={
                 "results": [],
-                "error": f"General recognition failure: {str(e)}"
+                "recognizerInferenceRan": False,
+                "error": {
+                    "stage": "recognition-inference",
+                    "message": str(e)
+                }
             }
         )
 

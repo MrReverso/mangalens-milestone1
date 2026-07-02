@@ -6,6 +6,8 @@ import json
 import argparse
 import traceback
 import platform
+import html
+import tempfile
 import cv2
 import numpy as np
 import requests
@@ -14,6 +16,15 @@ from PIL import Image, ImageDraw, ImageFont
 
 MANGA_ENGINE_URL = os.environ.get("MANGA_ENGINE_URL", "http://localhost:8002")
 PADDLE_ENGINE_URL = os.environ.get("PADDLE_ENGINE_URL", "http://localhost:8003")
+
+
+def write_image(path: str, image: np.ndarray) -> None:
+    if not cv2.imwrite(path, image):
+        raise RuntimeError(f"Failed to write image: {path}")
+
+
+def resolve_output_path(output_dir: str, path: str) -> str:
+    return path if os.path.isabs(path) else os.path.join(output_dir, path)
 
 
 def normalize_orientation(direction: str) -> str:
@@ -61,8 +72,13 @@ def crop_polygon_perspective(img: np.ndarray, pts: List[List[float]]) -> np.ndar
 
 
 def crop_polygon_aabb(img: np.ndarray, pts: List[List[float]]) -> np.ndarray:
-    pts_np = np.array(pts, dtype=np.int32)
-    x, y, w, h = cv2.boundingRect(pts_np)
+    pts_np = np.array(pts, dtype=np.float32)
+    x = int(np.floor(pts_np[:, 0].min()))
+    y = int(np.floor(pts_np[:, 1].min()))
+    x_max = int(np.ceil(pts_np[:, 0].max()))
+    y_max = int(np.ceil(pts_np[:, 1].max()))
+    w = x_max - x
+    h = y_max - y
     x = max(0, min(x, img.shape[1] - 1))
     y = max(0, min(y, img.shape[0] - 1))
     w = max(1, min(w, img.shape[1] - x))
@@ -180,25 +196,25 @@ def generate_comparison_html(output_dir: str, benchmark_results: Dict[str, Any],
     ]
 
     for img_name, engines_data in benchmark_results.items():
-        html_lines.append(f"  <h2>Image: {img_name}</h2>")
+        html_lines.append(f"  <h2>Image: {html.escape(str(img_name))}</h2>")
         html_lines.append("  <div class='comparison-grid'>")
         
         if os.path.isdir(input_source):
             orig_full = os.path.join(input_source, img_name)
         else:
-            orig_full = input_source
+            orig_full = resolve_output_path(output_dir, input_source)
             
         rel_orig = os.path.relpath(orig_full, output_dir)
         html_lines.append("    <div>")
         html_lines.append("      <div class='column-header'>Original Image</div>")
         html_lines.append("      <div class='image-card'>")
-        html_lines.append(f"        <img src='{rel_orig}' alt='Original Image'>")
+        html_lines.append(f"        <img src='{html.escape(rel_orig, quote=True)}' alt='Original Image'>")
         html_lines.append("      </div>")
         html_lines.append("    </div>")
 
         for engine_name in ["manga-image-translator-default", "manga-image-translator-ctd", "dbnet-mangaocr-paddleocr", "paddleocr-standalone"]:
             html_lines.append("    <div>")
-            html_lines.append(f"      <div class='column-header'>{engine_name}</div>")
+            html_lines.append(f"      <div class='column-header'>{html.escape(engine_name)}</div>")
             
             res = engines_data.get(engine_name)
             if not res:
@@ -208,23 +224,24 @@ def generate_comparison_html(output_dir: str, benchmark_results: Dict[str, Any],
 
             html_lines.append("      <div class='image-card'>")
             
-            if res["status"] in ["success", "no_text"] and res.get("annotatedPath") and os.path.exists(res["annotatedPath"]):
-                rel_annotated = os.path.relpath(res["annotatedPath"], output_dir)
-                html_lines.append(f"        <img src='{rel_annotated}' alt='{engine_name} annotated'>")
+            annotated_full = resolve_output_path(output_dir, res.get("annotatedPath", ""))
+            if res["status"] in ["success", "no_text"] and res.get("annotatedPath") and os.path.exists(annotated_full):
+                rel_annotated = os.path.relpath(annotated_full, output_dir)
+                html_lines.append(f"        <img src='{html.escape(rel_annotated, quote=True)}' alt='{html.escape(engine_name, quote=True)} annotated'>")
             else:
                 html_lines.append("        <div style='height:200px; display:flex; justify-content:center; align-items:center; background:#0f172a; border-radius:8px; color:#64748b;'>No annotation available</div>")
 
             status = res["status"]
             status_class = f"status-{status}"
             html_lines.append("        <div class='meta-box'>")
-            html_lines.append(f"          Status: <span class='status-badge {status_class}'>{status}</span><br>")
+            html_lines.append(f"          Status: <span class='status-badge {html.escape(status_class, quote=True)}'>{html.escape(str(status))}</span><br>")
             html_lines.append(f"          Time: {res.get('processingTimeMs', 0)}ms<br>")
             html_lines.append(f"          Regions: {len(res.get('regions', []))}<br>")
-            html_lines.append(f"          Detector: {res.get('detector', 'N/A')}<br>")
-            html_lines.append(f"          Recognizer: {res.get('recognizer', 'N/A')}<br>")
+            html_lines.append(f"          Detector: {html.escape(str(res.get('detector', 'N/A')))}<br>")
+            html_lines.append(f"          Recognizer: {html.escape(str(res.get('recognizer', 'N/A')))}<br>")
             
             if res.get("errors"):
-                errors_str = "; ".join(res["errors"])
+                errors_str = html.escape("; ".join(str(error) for error in res["errors"]))
                 html_lines.append(f"          <span style='color:#ef4444;'>Errors: {errors_str}</span><br>")
             
             html_lines.append("        </div>")
@@ -233,7 +250,7 @@ def generate_comparison_html(output_dir: str, benchmark_results: Dict[str, Any],
                 html_lines.append("        <div class='text-list'>")
                 for r in res["regions"]:
                     snippet = r["text"][:30] + ("..." if len(r["text"]) > 30 else "")
-                    html_lines.append(f"[{r['id']}] {snippet} ({round((r.get('confidence') or 0.0)*100)}%)<br>")
+                    html_lines.append(f"[{html.escape(str(r['id']))}] {html.escape(str(snippet))} ({round((r.get('confidence') or 0.0)*100)}%)<br>")
                 html_lines.append("        </div>")
 
             html_lines.append("      </div>")
@@ -261,7 +278,7 @@ def generate_comparison_html(output_dir: str, benchmark_results: Dict[str, Any],
         "  <div class='review-template-container'>",
         "    <div class='review-template-title'>Manual Review JSON Template</div>",
         "    <p>Please copy the template below, fill out the metrics for each image and pipeline based on visual inspection, and save it as a manual review report:</p>",
-        f"    <pre>{json_template_str}</pre>",
+        f"    <pre>{html.escape(json_template_str)}</pre>",
         "  </div>",
         "</body>",
         "</html>"
@@ -300,7 +317,7 @@ def run_demo_mode(output_dir: str, language: str, cjk_font_path: Optional[str] =
         draw.text((450, 450), "MANGA PANEL 2", font=font, fill=(0, 0, 0))
     dummy_img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
         
-    cv2.imwrite(dummy_path, dummy_img)
+    write_image(dummy_path, dummy_img)
     
     # Generate mock regions matching structural rules
     mock_regions = [
@@ -353,7 +370,7 @@ def run_demo_mode(output_dir: str, language: str, cjk_font_path: Optional[str] =
         
     res_engine = demo_results["dummy_manga_page.png"]["manga-image-translator-default"]
     annotated_img = draw_annotations(dummy_path, res_engine, (0, 200, 0), cjk_font_path)
-    cv2.imwrite(res_engine["annotatedPath"], annotated_img)
+    write_image(res_engine["annotatedPath"], annotated_img)
     
     generate_comparison_html(demo_dir, demo_results, dummy_path)
     print(f"Demo run completed successfully. Outputs saved to: {demo_dir}")
@@ -419,7 +436,7 @@ class PipelineRunner:
                     f"{MANGA_ENGINE_URL}/detect",
                     files={"image": f},
                     data={"detector": "default"},
-                    timeout=60
+                    timeout=(5, 120)
                 )
             if r_det.status_code != 200:
                 raise RuntimeError(f"manga-engine /detect failed: {r_det.status_code} - {r_det.text}")
@@ -441,7 +458,7 @@ class PipelineRunner:
                             "regions": json.dumps(detected_regions),
                             "recognizer": "ocr48px"
                         },
-                        timeout=60
+                        timeout=(5, 120)
                     )
                 if r_ocr.status_code != 200:
                     raise RuntimeError(f"manga-engine /recognize-japanese failed: {r_ocr.status_code} - {r_ocr.text}")
@@ -512,7 +529,7 @@ class PipelineRunner:
                     f"{MANGA_ENGINE_URL}/detect",
                     files={"image": f},
                     data={"detector": detector_name},
-                    timeout=60
+                    timeout=(5, 120)
                 )
             if r_det.status_code != 200:
                 raise RuntimeError(f"manga-engine /detect ({detector_name}) failed: {r_det.status_code} - {r_det.text}")
@@ -535,7 +552,7 @@ class PipelineRunner:
                                 "regions": json.dumps(detected_regions),
                                 "recognizer": "manga-ocr"
                             },
-                            timeout=60
+                            timeout=(5, 120)
                         )
                     if r_ocr.status_code != 200:
                         raise RuntimeError(f"manga-engine /recognize-japanese failed: {r_ocr.status_code} - {r_ocr.text}")
@@ -596,7 +613,7 @@ class PipelineRunner:
                             if crop_success and crop_img is not None and crop_img.size > 0:
                                 temp_fd, temp_path = tempfile.mkstemp(suffix=".png")
                                 os.close(temp_fd)
-                                cv2.imwrite(temp_path, crop_img)
+                                write_image(temp_path, crop_img)
                                 temp_files_to_cleanup.append(temp_path)
                                 
                                 crop_files.append(("files", open(temp_path, "rb")))
@@ -612,7 +629,7 @@ class PipelineRunner:
                                 f"{PADDLE_ENGINE_URL}/recognize",
                                 files=crop_files,
                                 data={"language": language},
-                                timeout=60
+                                timeout=(5, 120)
                             )
                             
                             # Close the files so we can delete them
@@ -634,6 +651,10 @@ class PipelineRunner:
                                 
                                 if res_item.get("error"):
                                     errors.append(f"Crop {original_idx + 1} recognition error: {res_item['error']}")
+                                    failed_crops += 1
+                                    continue
+                                if res_item.get("recognizerInferenceRan") is not True:
+                                    errors.append(f"Crop {original_idx + 1} did not run recognizer inference")
                                     failed_crops += 1
                                     continue
                                     
@@ -659,7 +680,9 @@ class PipelineRunner:
                                     "detector": detector_name,
                                     "recognizer": f"paddleocr-{language}",
                                     "detectorMode": orig_region.get("detectorMode", "genuine"),
-                                    "detectorInferenceRan": orig_region.get("detectorInferenceRan", True)
+                                    "detectorInferenceRan": orig_region.get("detectorInferenceRan", True),
+                                    "recognizerMode": "real",
+                                    "recognizerInferenceRan": True
                                 })
                         else:
                             # All crops failed to generate
@@ -670,10 +693,10 @@ class PipelineRunner:
                             if os.path.exists(tp):
                                 os.remove(tp)
                                 
-                    if successful_crops > 0:
-                        status = "success"
-                    elif failed_crops > 0:
+                    if failed_crops > 0:
                         status = "failed"
+                    elif successful_crops > 0:
+                        status = "success"
                     else:
                         status = "no_text"
             else:
@@ -693,7 +716,11 @@ class PipelineRunner:
             "errors": errors,
             "processingTimeMs": int((time.time() - start_time) * 1000),
             "detector": detector_name,
-            "recognizer": f"manga-ocr" if language == "ja" else f"paddleocr-{language}"
+            "recognizer": f"manga-ocr" if language == "ja" else f"paddleocr-{language}",
+            "detectorMode": regions_result[0].get("detectorMode") if regions_result else "mock",
+            "detectorInferenceRan": regions_result[0].get("detectorInferenceRan") if regions_result else False,
+            "recognizerMode": "real",
+            "recognizerInferenceRan": any(r.get("recognizerInferenceRan") is True for r in regions_result)
         }
 
     def execute_pipeline_d(self, img_path: str, img: np.ndarray, language: str) -> Dict[str, Any]:
@@ -710,7 +737,7 @@ class PipelineRunner:
                     f"{PADDLE_ENGINE_URL}/detect-recognize",
                     files={"image": f},
                     data={"language": language},
-                    timeout=60
+                    timeout=(5, 120)
                 )
             if r_paddle.status_code != 200:
                 raise RuntimeError(f"paddle-engine /detect-recognize failed: {r_paddle.status_code} - {r_paddle.text}")
@@ -743,7 +770,9 @@ class PipelineRunner:
                     "detector": "paddleocr",
                     "recognizer": f"paddleocr-{language}",
                     "detectorMode": "genuine",
-                    "detectorInferenceRan": True
+                    "detectorInferenceRan": True,
+                    "recognizerMode": "real",
+                    "recognizerInferenceRan": True
                 })
                 
             status = "success" if regions_result else "no_text"
@@ -762,7 +791,11 @@ class PipelineRunner:
             "errors": errors,
             "processingTimeMs": int((time.time() - start_time) * 1000),
             "detector": "paddleocr",
-            "recognizer": f"paddleocr-{language}"
+            "recognizer": f"paddleocr-{language}",
+            "detectorMode": "real",
+            "detectorInferenceRan": True,
+            "recognizerMode": "real",
+            "recognizerInferenceRan": bool(regions_result)
         }
 
 
@@ -855,7 +888,7 @@ def main():
                 color = colors["manga-image-translator-default"]
                 annotated_img = draw_annotations(img_path, res, color, args.cjk_font)
                 annotated_path = os.path.join(args.output, f"annotated_manga-image-translator-default_{img_name}")
-                cv2.imwrite(annotated_path, annotated_img)
+                write_image(annotated_path, annotated_img)
                 res["annotatedPath"] = annotated_path
             benchmark_results[img_name][res["engine"]] = res
 
@@ -869,7 +902,7 @@ def main():
                 color = colors["manga-image-translator-ctd"]
                 annotated_img = draw_annotations(img_path, res, color, args.cjk_font)
                 annotated_path = os.path.join(args.output, f"annotated_manga-image-translator-ctd_{img_name}")
-                cv2.imwrite(annotated_path, annotated_img)
+                write_image(annotated_path, annotated_img)
                 res["annotatedPath"] = annotated_path
             benchmark_results[img_name][res["engine"]] = res
 
@@ -883,7 +916,7 @@ def main():
                 color = colors["dbnet-mangaocr-paddleocr"]
                 annotated_img = draw_annotations(img_path, res, color, args.cjk_font)
                 annotated_path = os.path.join(args.output, f"annotated_dbnet-mangaocr-paddleocr_{img_name}")
-                cv2.imwrite(annotated_path, annotated_img)
+                write_image(annotated_path, annotated_img)
                 res["annotatedPath"] = annotated_path
             benchmark_results[img_name][res["engine"]] = res
 
@@ -897,7 +930,7 @@ def main():
                 color = colors["paddleocr-standalone"]
                 annotated_img = draw_annotations(img_path, res, color, args.cjk_font)
                 annotated_path = os.path.join(args.output, f"annotated_paddleocr-standalone_{img_name}")
-                cv2.imwrite(annotated_path, annotated_img)
+                write_image(annotated_path, annotated_img)
                 res["annotatedPath"] = annotated_path
             benchmark_results[img_name][res["engine"]] = res
 

@@ -22,7 +22,14 @@ RUN python -m pip check
 
 # Copy app code
 COPY app.py .
+COPY result_parser.py .
+COPY test_result_parser.py .
 COPY verify_paddle_inference.py .
+COPY prepare_models.py .
+
+# Bake the exact English detector, recognizer, and classifier cache into the
+# image used by both standalone verification and Docker Compose.
+RUN python prepare_models.py
 
 EXPOSE 8003
 

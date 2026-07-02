@@ -2,6 +2,7 @@ version: '3.8'
 
 services:
   manga-engine:
+    image: ocr-benchmark-manga-engine
     build:
       context: ./manga_engine
       dockerfile: Dockerfile
@@ -17,6 +18,7 @@ services:
       - OCR_BENCHMARK_MOCK_DETECTOR=${OCR_BENCHMARK_MOCK_DETECTOR:-false}
 
   paddle-engine:
+    image: ocr-benchmark-paddle-engine
     build:
       context: ./paddle_engine
       dockerfile: Dockerfile
@@ -31,6 +33,7 @@ services:
       - PORT=8003
 
   benchmark-orchestrator:
+    image: ocr-benchmark-orchestrator
     build:
       context: ./orchestrator
       dockerfile: Dockerfile
