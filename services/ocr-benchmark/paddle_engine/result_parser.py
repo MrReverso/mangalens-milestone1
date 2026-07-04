@@ -4,10 +4,9 @@ import math
 def is_genuine_empty_recognition_result(result) -> bool:
     """Recognize PaddleOCR 2.8.1's explicit rec-only empty sentinel.
 
-    TextRecognizer initializes an unfilled result as ``["", 0.0]`` and
-    PaddleOCR.ocr adds the batch and page wrappers. Therefore
-    ``[[["", 0.0]]]`` is the expected single-image blank-output shape for
-    PaddleOCR 2.8.1, pending confirmation by the CI runtime probe.
+    The pinned PaddleOCR 2.8.1 runtime returns ``[[("", 0.0)]]`` for the
+    single blank-image recognition-only probe: one page list containing one
+    ``(text, confidence)`` tuple.
     """
     if not isinstance(result, list) or len(result) != 1:
         return False
@@ -16,7 +15,7 @@ def is_genuine_empty_recognition_result(result) -> bool:
         return False
     item = batch[0]
     return (
-        isinstance(item, list)
+        isinstance(item, tuple)
         and len(item) == 2
         and item[0] == ""
         and isinstance(item[1], (int, float))

@@ -1,4 +1,3 @@
-import math
 import pytest
 
 from result_parser import (
@@ -36,7 +35,7 @@ def test_invalid_shapes_raise(value):
 
 
 def test_paddle_2_8_1_explicit_empty_sentinel():
-    result = [[["", 0.0]]]
+    result = [[("", 0.0)]]
     assert is_genuine_empty_recognition_result(result)
     with pytest.raises(ValueError):
         parse_recognition_result(result)
@@ -46,10 +45,15 @@ def test_paddle_2_8_1_explicit_empty_sentinel():
     None,
     [],
     [[]],
-    [[("", 0.0)]],
-    [[["", 0.1]]],
-    [[[" ", 0.0]]],
-    [[["", False]]],
+    ("", 0.0),
+    [("", 0.0)],
+    [[["", 0.0]]],
+    [[("", 0.0, "extra")]],
+    [[("", 0.0), ("", 0.0)]],
+    [[("", 0.0)], []],
+    [[("", 0.1)]],
+    [[(" ", 0.0)]],
+    [[("", False)]],
 ])
 def test_only_explicit_paddle_empty_sentinel_is_accepted(value):
     assert not is_genuine_empty_recognition_result(value)
