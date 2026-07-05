@@ -24,7 +24,7 @@ deployed automatically.
   - Add meaningful health/readiness checks for the backend and Manga Engine.
   - Document and script the local Docker startup path without new Chrome
     permissions.
-- [ ] **6C: Extension integration**
+- [x] **6C: Extension integration**
   - Make the existing OCR action use the local provider by default.
   - Preserve editable overlays, current-tab edits, operation sequencing, and
     friendly structured errors.
