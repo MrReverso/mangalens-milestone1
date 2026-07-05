@@ -96,4 +96,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ocr-benchmark-ci-evidence
-          path: services/ocr-benchmark/results/ci/**
+          path: |
+            services/ocr-benchmark/results/ci/**
+            services/ocr-benchmark/results/authentic/**

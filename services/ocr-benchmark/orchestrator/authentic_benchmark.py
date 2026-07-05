@@ -283,6 +283,8 @@ def main():
     )
     generate_comparison_html(str(OUTPUT_DIR), html_results, str(fixtures_dir))
     write_summary(report)
+    print("Authentic benchmark ranking:", flush=True)
+    print(json.dumps(report["ranking"], ensure_ascii=False, indent=2), flush=True)
     print(f"Authentic benchmark complete. Winner: {report['ranking'][0]['pipeline']}")
 
 
