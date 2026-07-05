@@ -262,11 +262,8 @@ function validateRecognitionResponse(
     if (!detection) throw new OcrFailure("ocr-invalid-response");
     regions.push({
       text,
-      bounds: normalizePoints(
-        detection.points,
-        pixelWidth,
-        pixelHeight
-      ),
+      bounds: normalizePoints(detection.points, pixelWidth, pixelHeight),
+      polygon: normalizePolygon(detection.points, pixelWidth, pixelHeight),
       orientation: detection.direction === "v" ? "vertical" : "horizontal",
     });
   }
@@ -294,6 +291,29 @@ function normalizePoints(
     width: (maxX - minX) / pixelWidth,
     height: (maxY - minY) / pixelHeight,
   };
+}
+
+function normalizePolygon(
+  points: readonly (readonly [number, number])[],
+  pixelWidth: number,
+  pixelHeight: number
+): readonly [
+  { readonly x: number; readonly y: number },
+  { readonly x: number; readonly y: number },
+  { readonly x: number; readonly y: number },
+  { readonly x: number; readonly y: number },
+] {
+  if (points.length !== 4) throw new OcrFailure("ocr-invalid-response");
+  const normalize = ([x, y]: readonly [number, number]) => ({
+    x: x / pixelWidth,
+    y: y / pixelHeight,
+  });
+  return [
+    normalize(points[0]),
+    normalize(points[1]),
+    normalize(points[2]),
+    normalize(points[3]),
+  ];
 }
 
 async function readJsonResponse(

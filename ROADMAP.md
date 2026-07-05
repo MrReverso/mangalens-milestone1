@@ -39,7 +39,7 @@ deployed automatically.
 - [ ] **7A: OCR geometry fidelity**
   - [x] Preserve validated detector direction through OCR and render vertical
     text with vertical writing geometry.
-  - [ ] Preserve normalized detector quadrilaterals and apply safe
+  - [x] Preserve normalized detector quadrilaterals and apply safe
     polygon-aware bubble placement.
   - [ ] Improve deterministic reading order and responsive text fitting.
 - [ ] **7B: Expanded page capture**

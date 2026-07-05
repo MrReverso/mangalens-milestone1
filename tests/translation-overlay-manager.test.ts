@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TranslationOverlayManager } from "@/lib/translation-overlay-manager";
+import {
+  polygonClipPath,
+  TranslationOverlayManager,
+} from "@/lib/translation-overlay-manager";
 import type { TranslationBubble } from "@/types/translation";
 
 let resizeCallback: ResizeObserverCallback;
@@ -95,6 +98,32 @@ describe("TranslationOverlayManager", () => {
     );
     expect(bubble?.style.writingMode).toBe("vertical-rl");
     expect(bubble?.style.textOrientation).toBe("mixed");
+    manager.clear();
+  });
+
+  it("clips a bubble to its normalized detector quadrilateral", () => {
+    const polygonBubble: TranslationBubble = {
+      ...bubbles[0],
+      polygon: [
+        { x: 0.1, y: 0.2 },
+        { x: 0.4, y: 0.21 },
+        { x: 0.38, y: 0.3 },
+        { x: 0.12, y: 0.29 },
+      ],
+    };
+    expect(polygonClipPath(polygonBubble)).toBe(
+      "polygon(0% 0%, 100% 10%, 93.3333% 100%, 6.6667% 90%)"
+    );
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1000, 1000)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", image, [polygonBubble]);
+    expect(document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    )?.style.clipPath).toBe(polygonClipPath(polygonBubble));
     manager.clear();
   });
 

@@ -284,6 +284,12 @@ describe("Development Server Handlers", () => {
       pageId: "page-1",
       bubbles: [{
         bounds: { x: 0.1, y: 0.2, width: 0.6, height: 0.2 },
+        polygon: [
+          { x: 0.1, y: 0.2 },
+          { x: 0.7, y: 0.2 },
+          { x: 0.7, y: 0.4 },
+          { x: 0.1, y: 0.4 },
+        ],
         orientation: "horizontal",
         originalText: "読めます",
         translatedText: "読めます",

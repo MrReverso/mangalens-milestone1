@@ -6,7 +6,7 @@
   overlays, contract-flow verification, failure-path coverage, and manual
   Chrome walkthrough are complete.
 - **Current branch:** `codex/milestone-7a-polygon-overlays`
-- **Current PR:** Not opened yet; this branch is stacked on draft PR #10.
+- **Current PR:** Draft PR #11, stacked on draft PR #10.
 - **Latest stable implementation commit:** `a62c8f3` adds the local OCR
   contract-flow test and manual Chrome fixture walkthrough.
 - **Latest CI:** Runs
@@ -18,6 +18,5 @@
   the local environment; DBConvNext has an invalid upstream model mapping.
 - **Superseded work:** Draft PR #8 uses a bundled Tesseract/WASM architecture
   and is not the selected Milestone 6 path. It remains untouched.
-- **Exact next task:** Preserve normalized DBNet detector quadrilaterals through
-  the strict backend contract and use them for safe polygon-aware overlay
-  placement, without changing capture scope or adding real translation.
+- **Exact next task:** Improve deterministic OCR reading order and responsive
+  text fitting while preserving edits, vertical writing, and polygon placement.

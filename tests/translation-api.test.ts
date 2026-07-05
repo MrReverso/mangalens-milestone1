@@ -34,6 +34,36 @@ describe("future translation API validation", () => {
     })).toBeNull();
   });
 
+  it("validates normalized quadrilaterals within their bubble bounds", () => {
+    const polygon = [
+      { x: 0.1, y: 0.1 },
+      { x: 0.4, y: 0.12 },
+      { x: 0.38, y: 0.3 },
+      { x: 0.12, y: 0.28 },
+    ];
+    const polygonResponse = {
+      ...valid,
+      bubbles: [{ ...valid.bubbles[0], polygon }],
+    };
+    expect(validateTranslationApiSuccessResponse(polygonResponse))
+      .toEqual(polygonResponse);
+    expect(validateTranslationApiSuccessResponse({
+      ...valid,
+      bubbles: [{
+        ...valid.bubbles[0],
+        polygon: polygon.map((point, index) =>
+          index === 0 ? { x: 0.05, y: point.y } : point),
+      }],
+    })).toBeNull();
+    expect(validateTranslationApiSuccessResponse({
+      ...valid,
+      bubbles: [{
+        ...valid.bubbles[0],
+        polygon: polygon.map(() => ({ x: 0.2, y: 0.2 })),
+      }],
+    })).toBeNull();
+  });
+
   it("rejects invalid normalized coordinates", () => {
     expect(validateTranslationApiSuccessResponse({
       ...valid,

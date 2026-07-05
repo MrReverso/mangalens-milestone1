@@ -157,7 +157,9 @@ responses are rejected.
 
 Validated horizontal/vertical detector direction is preserved through the
 backend contract. Vertical OCR regions render with vertical writing geometry
-while retaining the same safe textarea editing behavior.
+while retaining the same safe textarea editing behavior. Validated detector
+quadrilaterals remain normalized and clip overlays to the detected text shape;
+axis-aligned bounds still provide stable sizing and editing coordinates.
 
 Google Vision remains disabled by default. Setting the exact value
 `MANGALENS_ENABLE_GOOGLE_VISION=true` explicitly selects the remote development

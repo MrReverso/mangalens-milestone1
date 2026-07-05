@@ -140,6 +140,12 @@ describe("DbnetOcr48pxProvider", () => {
       regions: [{
         text: "こんにちは",
         bounds: { x: 0.1, y: 0.1, width: 0.4, height: 0.1 },
+        polygon: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.5, y: 0.1 },
+          { x: 0.5, y: 0.2 },
+          { x: 0.1, y: 0.2 },
+        ],
         orientation: "horizontal",
       }],
     });
@@ -178,6 +184,12 @@ describe("DbnetOcr48pxProvider", () => {
     expect(result.regions[0]).toMatchObject({
       orientation: "vertical",
       bounds: { x: 0.1, y: 0.1, width: 0.12, height: 0.4 },
+      polygon: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.22, y: 0.1 },
+        { x: 0.22, y: 0.5 },
+        { x: 0.1, y: 0.5 },
+      ],
     });
   });
 
