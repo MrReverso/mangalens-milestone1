@@ -1,6 +1,6 @@
 # MangaLens Current State
 
-- **Current milestone:** Milestone 6C — extension integration.
+- **Current milestone:** Milestone 6D — end-to-end verification.
 - **Completed work:** The strict local DBNet + OCR48px provider, bounded engine
   readiness probe, local startup commands, and extension-facing local OCR
   action are complete. Editable OCR overlays continue to use page-session state.
@@ -15,5 +15,6 @@
   the local environment; DBConvNext has an invalid upstream model mapping.
 - **Superseded work:** Draft PR #8 uses a bundled Tesseract/WASM architecture
   and is not the selected Milestone 6 path. It remains untouched.
-- **Exact next task:** Validate the extension-facing local OCR copy and error
-  mapping, then begin Milestone 6D end-to-end contract verification.
+- **Exact next task:** Complete Milestone 6D cancellation, timeout, unavailable
+  engine, malformed-response, and cleanup coverage; Docker-backed execution
+  remains delegated to CI.

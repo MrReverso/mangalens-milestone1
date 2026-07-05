@@ -129,17 +129,11 @@ docker compose down
 
 ## Next milestone
 
-The next milestone should integrate the winning local OCR path without adding
-real translation:
-
-- expose DBNet + OCR48px through a stable loopback backend contract;
-- connect the Chrome extension capture flow to that contract;
-- preserve the existing editable bubble overlays;
-- keep Google Vision disabled by default as an explicit fallback;
-- add bounded timeouts, cancellation, structured errors, and health checks;
-- keep captured images and OCR text ephemeral and local-first.
-
-Real translation remains a separate, later reviewed milestone.
+Milestone 6D will verify the complete capture → loopback backend →
+DBNet/OCR48px → editable overlay flow, including cancellation, unavailable
+services, malformed responses, and cleanup. Capture and OCR placement quality
+will be improved only after that local-first path is stable. Real translation
+remains a separate, later reviewed milestone.
 
 ## Milestone 6 local development
 
@@ -164,3 +158,21 @@ responses are rejected.
 Google Vision remains disabled by default. Setting the exact value
 `MANGALENS_ENABLE_GOOGLE_VISION=true` explicitly selects the remote development
 fallback instead of the local provider.
+
+### Manual Chrome walkthrough
+
+1. Run `pnpm fixture`, then open `http://127.0.0.1:4173/capture-test.html`.
+2. Run `pnpm dev:ocr-engine` and wait for Manga Engine to become healthy.
+3. Run `pnpm dev:backend`; verify its `/health` response has
+   `"ocrProvider":"dbnet-ocr48px"` and `"ocrReady":true`.
+4. Run `pnpm build`, open `chrome://extensions`, enable Developer mode, and
+   load `.output/chrome-mv3` as an unpacked extension.
+5. In the fixture tab, choose **Scan Manga Page**, ensure one complete page is
+   visible, then choose **Run Local OCR**.
+6. Confirm OCR bubbles appear over the page, can be edited, and retain edits
+   after hiding/showing overlays and scrolling the nested reader.
+7. Stop Manga Engine and retry to confirm the popup reports a friendly local
+   OCR failure without exposing raw errors.
+
+The fixture uses only local synthetic SVG pages. Its text and layout are useful
+for transport, positioning, and cleanup checks, not for judging OCR accuracy.

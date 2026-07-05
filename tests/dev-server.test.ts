@@ -9,6 +9,7 @@ import { Buffer } from "node:buffer";
 import { OcrFailure } from "@/dev/backend/ocr/ocr-errors";
 import type { OcrErrorCode } from "@/dev/backend/ocr/ocr-errors";
 import type { OcrInput } from "@/dev/backend/ocr/ocr-types";
+import { DbnetOcr48pxProvider } from "@/dev/backend/ocr/dbnet-ocr48px-provider";
 
 const fakeProviderMetadata = {
   id: "test-fake" as const,
@@ -241,6 +242,52 @@ describe("Development Server Handlers", () => {
       ocrReady: false,
     });
     expect(health).toHaveBeenCalledOnce();
+  });
+
+  it("runs the capture contract through DBNet and OCR48px into editable bubbles", async () => {
+    const engineFetch: typeof fetch = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        detector: "default",
+        width: 100,
+        height: 100,
+        errors: [],
+        regions: [{
+          id: "region-1",
+          pts: [[10, 20], [70, 20], [70, 40], [10, 40]],
+          detectorMode: "genuine",
+          detectorInferenceRan: true,
+        }],
+      }), { headers: { "content-type": "application/json" } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        errors: [],
+        regions: [{
+          id: "region-1",
+          text: "  読めます  ",
+          confidence: 0.94,
+        }],
+      }), { headers: { "content-type": "application/json" } }));
+    const handler = createTranslationRequestHandler({
+      ocrProvider: new DbnetOcr48pxProvider(engineFetch),
+      logger: () => undefined,
+    });
+    const { res, getOutput } = createMockResponse();
+
+    await handler(createValidPostRequest(), res);
+
+    expect(getOutput().status).toBe(200);
+    expect(engineFetch).toHaveBeenCalledTimes(2);
+    const payload = JSON.parse(getOutput().body);
+    expect(payload).toMatchObject({
+      contractVersion: 1,
+      requestId: "req-1",
+      pageId: "page-1",
+      bubbles: [{
+        bounds: { x: 0.1, y: 0.2, width: 0.6, height: 0.2 },
+        originalText: "読めます",
+        translatedText: "読めます",
+      }],
+    });
+    expect(payload.bubbles[0].id).toBe("req-1-ocr-1");
   });
 
   it("POST /v1/translate returns deterministic translations based on targetLanguage", async () => {
