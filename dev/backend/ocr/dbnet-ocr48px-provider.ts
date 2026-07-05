@@ -1,6 +1,7 @@
 import type { OcrProvider } from "./ocr-provider";
 import type { OcrBounds, OcrInput, OcrRegion, OcrResult } from "./ocr-types";
 import { OcrFailure } from "./ocr-errors";
+import { orderOcrRegions } from "./ocr-reading-order";
 
 export const MANGA_ENGINE_ORIGIN = "http://127.0.0.1:8002";
 export const MANGA_ENGINE_HEALTH_ENDPOINT =
@@ -116,12 +117,12 @@ export class DbnetOcr48pxProvider implements OcrProvider {
       signal
     );
     return {
-      regions: validateRecognitionResponse(
+      regions: orderOcrRegions(validateRecognitionResponse(
         recognitionResponse,
         regions,
         input.pixelWidth,
         input.pixelHeight
-      ),
+      ), input.sourceLanguage),
     };
   }
 

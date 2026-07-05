@@ -165,6 +165,36 @@ describe("TranslationOverlayManager", () => {
     manager.clear();
   });
 
+  it("refits text after a saved edit and image resizing", () => {
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    let width = 1000;
+    vi.spyOn(image, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 0, width, 500)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", image, bubbles);
+    const element = document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    );
+    const initialSize = Number.parseFloat(element?.style.fontSize ?? "0");
+
+    expect(manager.updateBubbleText(
+      "page-1",
+      "bubble-1",
+      "A much longer translated sentence that needs more room"
+    )).toBe(true);
+    const editedSize = Number.parseFloat(element?.style.fontSize ?? "0");
+    expect(editedSize).toBeLessThan(initialSize);
+
+    width = 500;
+    resizeCallback([], {} as ResizeObserver);
+    flushFrame();
+    expect(Number.parseFloat(element?.style.fontSize ?? "0"))
+      .toBeLessThanOrEqual(editedSize);
+    manager.clear();
+  });
+
   it("hides and shows without discarding rendered results", () => {
     const image = document.createElement("img");
     document.body.appendChild(image);

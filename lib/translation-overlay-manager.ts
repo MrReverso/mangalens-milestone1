@@ -1,4 +1,5 @@
 import { normalizedToViewportRect } from "@/lib/image-position";
+import { responsiveBubbleFontSize } from "@/lib/bubble-layout";
 import { normalizeTranslationText } from "@/lib/translation-text";
 import type { TranslationBubble } from "@/types/translation";
 
@@ -186,6 +187,7 @@ export class TranslationOverlayManager {
         : bubble
     );
     page.elements[bubbleIndex].textContent = translatedText;
+    this.positionPage(page);
     return true;
   }
 
@@ -234,6 +236,12 @@ export class TranslationOverlayManager {
         left: `${rect.left}px`,
         width: `${rect.width}px`,
         height: `${rect.height}px`,
+        fontSize: `${responsiveBubbleFontSize(
+          rect.width,
+          rect.height,
+          bubble.translatedText,
+          bubble.orientation
+        )}px`,
       } as CSSStyleDeclaration);
     });
   }
