@@ -82,3 +82,38 @@ Upon completion, the orchestrator produces:
 -   `report.json`: JSON output mapping all authentic region coordinates, text labels, and confidence metrics.
 -   `comparison.html`: Dark-themed grid comparison view showing side-by-side annotations, text snippets, and the manual review JSON template.
 -   `annotated_<engine>_<image>.png`: Result overlay images.
+
+---
+
+## 6. Genuine Multilingual Benchmark Dataset
+
+`samples/benchmark_dataset/` contains three self-created synthetic pages
+(Japanese manga, Korean webtoon, and English comic layouts), dedicated to the
+public domain under CC0-1.0. No commercial manga or third-party artwork is
+included. The manifest contains expected text and ground-truth polygons.
+
+Regenerate the pages:
+
+```bash
+OCR_BENCHMARK_SAMPLE_DIR=../samples/benchmark_dataset \
+python generate_benchmark_samples.py
+```
+
+With genuine services running and `OCR_BENCHMARK_MOCK_DETECTOR` disabled:
+
+```bash
+OCR_BENCHMARK_MOCK_DETECTOR=false \
+OCR_BENCHMARK_SAMPLE_DIR=/app/samples/benchmark_dataset \
+OCR_BENCHMARK_OUTPUT_DIR=/app/results/authentic \
+python authentic_benchmark.py
+```
+
+The authentic run executes default DBNet + OCR48px, CTD +
+manga-ocr/PaddleOCR, DBConvNext + manga-ocr/PaddleOCR, and standalone
+PaddleOCR. It produces `report.json`, `comparison.html`, annotated images, and
+`benchmark-summary.md`. Pipeline failures are recorded as failures; no detector
+fallback is used.
+
+This small synthetic corpus proves genuine model execution and enables
+reproducible scoring. A larger separately licensed, human-reviewed corpus is
+still required before selecting a production OCR stack.

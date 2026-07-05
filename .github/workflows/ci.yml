@@ -72,6 +72,18 @@ jobs:
           cd services/ocr-benchmark
           docker build -t ocr-benchmark-orchestrator -f orchestrator/Dockerfile orchestrator
           OCR_BENCHMARK_MOCK_DETECTOR=true OCR_BENCHMARK_STRICT_E2E=true docker compose up --no-build --exit-code-from benchmark-orchestrator
+      - name: Run genuine multilingual detector benchmark
+        run: |
+          cd services/ocr-benchmark
+          docker compose down
+          OCR_BENCHMARK_MOCK_DETECTOR=false docker compose up -d --no-build --wait --wait-timeout 180 manga-engine paddle-engine
+          docker compose run --rm --no-deps \
+            -e OCR_BENCHMARK_MOCK_DETECTOR=false \
+            -e OCR_BENCHMARK_INFERENCE_TIMEOUT=900 \
+            -e OCR_BENCHMARK_SAMPLE_DIR=/app/samples/benchmark_dataset \
+            -e OCR_BENCHMARK_OUTPUT_DIR=/app/results/authentic \
+            --entrypoint python \
+            benchmark-orchestrator authentic_benchmark.py
       - name: Shut down services and dump logs
         if: always()
         run: |

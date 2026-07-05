@@ -16,6 +16,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 MANGA_ENGINE_URL = os.environ.get("MANGA_ENGINE_URL", "http://localhost:8002")
 PADDLE_ENGINE_URL = os.environ.get("PADDLE_ENGINE_URL", "http://localhost:8003")
+INFERENCE_TIMEOUT = (10, int(os.environ.get("OCR_BENCHMARK_INFERENCE_TIMEOUT", "120")))
 
 
 def write_image(path: str, image: np.ndarray) -> None:
@@ -428,6 +429,8 @@ class PipelineRunner:
         start_time = time.time()
         errors = []
         regions_result = []
+        detector_mode = "unknown"
+        detector_inference_ran = False
         
         try:
             # 1. POST /detect
@@ -436,7 +439,7 @@ class PipelineRunner:
                     f"{MANGA_ENGINE_URL}/detect",
                     files={"image": f},
                     data={"detector": "default"},
-                    timeout=(5, 120)
+                    timeout=INFERENCE_TIMEOUT
                 )
             if r_det.status_code != 200:
                 raise RuntimeError(f"manga-engine /detect failed: {r_det.status_code} - {r_det.text}")
@@ -445,6 +448,12 @@ class PipelineRunner:
             if det_res.get("errors"):
                 errors.extend(det_res["errors"])
                 raise RuntimeError(f"Detector reported internal errors: {det_res['errors']}")
+            detector_mode = (
+                det_res.get("regions", [{}])[0].get("detectorMode", "real")
+                if det_res.get("regions")
+                else "real"
+            )
+            detector_inference_ran = detector_mode != "mock"
                 
             detected_regions = det_res.get("regions", [])
             
@@ -458,7 +467,7 @@ class PipelineRunner:
                             "regions": json.dumps(detected_regions),
                             "recognizer": "ocr48px"
                         },
-                        timeout=(5, 120)
+                        timeout=INFERENCE_TIMEOUT
                     )
                 if r_ocr.status_code != 200:
                     raise RuntimeError(f"manga-engine /recognize-japanese failed: {r_ocr.status_code} - {r_ocr.text}")
@@ -503,7 +512,11 @@ class PipelineRunner:
             "errors": errors,
             "processingTimeMs": int((time.time() - start_time) * 1000),
             "detector": "default",
-            "recognizer": "ocr48px"
+            "recognizer": "ocr48px",
+            "detectorMode": detector_mode,
+            "detectorInferenceRan": detector_inference_ran,
+            "recognizerMode": "real",
+            "recognizerInferenceRan": bool(regions_result),
         }
 
     def execute_hybrid_pipeline(
@@ -521,6 +534,8 @@ class PipelineRunner:
         errors = []
         regions_result = []
         status = "no_text"
+        detector_mode = "unknown"
+        detector_inference_ran = False
         
         try:
             # 1. Get detector polygons
@@ -529,7 +544,7 @@ class PipelineRunner:
                     f"{MANGA_ENGINE_URL}/detect",
                     files={"image": f},
                     data={"detector": detector_name},
-                    timeout=(5, 120)
+                    timeout=INFERENCE_TIMEOUT
                 )
             if r_det.status_code != 200:
                 raise RuntimeError(f"manga-engine /detect ({detector_name}) failed: {r_det.status_code} - {r_det.text}")
@@ -538,6 +553,12 @@ class PipelineRunner:
             if det_res.get("errors"):
                 errors.extend(det_res["errors"])
                 raise RuntimeError(f"Detector reported internal errors: {det_res['errors']}")
+            detector_mode = (
+                det_res.get("regions", [{}])[0].get("detectorMode", "real")
+                if det_res.get("regions")
+                else "real"
+            )
+            detector_inference_ran = detector_mode != "mock"
                 
             detected_regions = det_res.get("regions", [])
             
@@ -552,7 +573,7 @@ class PipelineRunner:
                                 "regions": json.dumps(detected_regions),
                                 "recognizer": "manga-ocr"
                             },
-                            timeout=(5, 120)
+                            timeout=INFERENCE_TIMEOUT
                         )
                     if r_ocr.status_code != 200:
                         raise RuntimeError(f"manga-engine /recognize-japanese failed: {r_ocr.status_code} - {r_ocr.text}")
@@ -629,7 +650,7 @@ class PipelineRunner:
                                 f"{PADDLE_ENGINE_URL}/recognize",
                                 files=crop_files,
                                 data={"language": language},
-                                timeout=(5, 120)
+                                timeout=INFERENCE_TIMEOUT
                             )
                             
                             # Close the files so we can delete them
@@ -717,8 +738,8 @@ class PipelineRunner:
             "processingTimeMs": int((time.time() - start_time) * 1000),
             "detector": detector_name,
             "recognizer": f"manga-ocr" if language == "ja" else f"paddleocr-{language}",
-            "detectorMode": regions_result[0].get("detectorMode") if regions_result else "mock",
-            "detectorInferenceRan": regions_result[0].get("detectorInferenceRan") if regions_result else False,
+            "detectorMode": detector_mode,
+            "detectorInferenceRan": detector_inference_ran,
             "recognizerMode": "real",
             "recognizerInferenceRan": any(r.get("recognizerInferenceRan") is True for r in regions_result)
         }
@@ -737,7 +758,7 @@ class PipelineRunner:
                     f"{PADDLE_ENGINE_URL}/detect-recognize",
                     files={"image": f},
                     data={"language": language},
-                    timeout=(5, 120)
+                    timeout=INFERENCE_TIMEOUT
                 )
             if r_paddle.status_code != 200:
                 raise RuntimeError(f"paddle-engine /detect-recognize failed: {r_paddle.status_code} - {r_paddle.text}")
