@@ -5,6 +5,7 @@ import {
   installSafeGoogleAuthWarningFilter,
 } from "./ocr/google-access-token-provider";
 import { GoogleVisionOcrProvider } from "./ocr/google-vision-ocr-provider";
+import { DbnetOcr48pxProvider } from "./ocr/dbnet-ocr48px-provider";
 import {
   OptionalOcrProvider,
   isGoogleVisionExplicitlyEnabled,
@@ -17,10 +18,12 @@ const googleVisionEnabled = isGoogleVisionExplicitlyEnabled(
   process.env.MANGALENS_ENABLE_GOOGLE_VISION
 );
 const handleTranslationRequest = createTranslationRequestHandler({
-  ocrProvider: new OptionalOcrProvider(
-    new GoogleVisionOcrProvider(new AdcGoogleAccessTokenProvider()),
-    googleVisionEnabled
-  ),
+  ocrProvider: googleVisionEnabled
+    ? new OptionalOcrProvider(
+      new GoogleVisionOcrProvider(new AdcGoogleAccessTokenProvider()),
+      true
+    )
+    : new DbnetOcr48pxProvider(),
 });
 
 const server = createServer((req, res) => {
