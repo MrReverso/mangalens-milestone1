@@ -43,8 +43,11 @@ deployed automatically.
     polygon-aware bubble placement.
   - [x] Improve deterministic reading order and responsive text fitting.
 - [ ] **7B: Expanded page capture**
-  - Expand capture beyond one fully visible page without automatic destructive
-    page interaction.
+  - Choose a reviewed capture model for pages larger than the viewport.
+  - Recommended: user-guided overlapping segments with local-only assembly,
+    no automatic scrolling, and no new Chrome permissions.
+  - Alternatives requiring explicit review: automatic scroll/stitch or broader
+    permissions/source-image fetching.
 - [ ] Evaluate on a larger separately licensed and human-reviewed corpus.
 
 ## Later milestone — real translation

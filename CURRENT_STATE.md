@@ -7,17 +7,21 @@
   Chrome walkthrough are complete.
 - **Current branch:** `codex/milestone-7a-polygon-overlays`
 - **Current PR:** Draft PR #11, stacked on draft PR #10.
-- **Latest stable implementation commit:** `4e025c2` preserves detector
-  quadrilaterals and vertical writing through the strict overlay contract.
+- **Latest stable implementation commit:** `7117522` completes deterministic
+  reading order and edit-aware responsive text fitting.
 - **Latest CI:** Runs
-  [28752393287](https://github.com/MrReverso/mangalens-milestone1/actions/runs/28752393287)
+  [28752811382](https://github.com/MrReverso/mangalens-milestone1/actions/runs/28752811382)
   and
-  [28752392228](https://github.com/MrReverso/mangalens-milestone1/actions/runs/28752392228)
-  passed both `verify` and `ocr-benchmark-verify` for `4e025c2`.
+  [28752810444](https://github.com/MrReverso/mangalens-milestone1/actions/runs/28752810444)
+  passed both `verify` and `ocr-benchmark-verify` for `7117522`.
 - **Active blockers:** PR #9 awaits user merge/review; Docker is unavailable in
   the local environment; DBConvNext has an invalid upstream model mapping.
 - **Superseded work:** Draft PR #8 uses a bundled Tesseract/WASM architecture
   and is not the selected Milestone 6 path. It remains untouched.
-- **Exact next task:** Validate the completed reading-order and responsive
-  text-fitting checkpoint in CI, then scope Milestone 7B capture expansion
-  without automatic destructive scrolling.
+- **Decision needed:** Milestone 7B requires choosing how to capture pages
+  larger than the viewport. The recommended path is user-guided overlapping
+  segments with ephemeral local assembly; automatic scrolling/stitching and
+  broader permissions/source fetching have materially different interaction
+  and privacy trade-offs.
+- **Exact next task:** After that capture-model decision, create a new Milestone
+  7B branch and implement the smallest reviewed vertical-page capture slice.
