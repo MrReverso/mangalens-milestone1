@@ -95,6 +95,12 @@ export class TranslationOverlayManager {
         whiteSpace: "pre-wrap",
         overflowWrap: "anywhere",
         overflow: "hidden",
+        writingMode: bubble.orientation === "vertical"
+          ? "vertical-rl"
+          : "horizontal-tb",
+        textOrientation: bubble.orientation === "vertical"
+          ? "mixed"
+          : "initial",
         pointerEvents: "auto",
         cursor: "text",
       } as CSSStyleDeclaration);

@@ -10,6 +10,7 @@ export interface NormalizedRect {
 export interface TranslationBubble {
   readonly id: string;
   readonly bounds: NormalizedRect;
+  readonly orientation?: "horizontal" | "vertical";
   readonly originalText: string;
   readonly translatedText: string;
 }

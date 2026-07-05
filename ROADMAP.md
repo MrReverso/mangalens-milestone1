@@ -36,10 +36,15 @@ deployed automatically.
 
 ## Milestone 7 — capture and placement quality
 
-- [ ] Expand capture beyond one fully visible page without automatic destructive
-  page interaction.
-- [ ] Improve polygon-to-overlay placement, vertical text, reading order, and
-  responsive text fitting.
+- [ ] **7A: OCR geometry fidelity**
+  - [x] Preserve validated detector direction through OCR and render vertical
+    text with vertical writing geometry.
+  - [ ] Preserve normalized detector quadrilaterals and apply safe
+    polygon-aware bubble placement.
+  - [ ] Improve deterministic reading order and responsive text fitting.
+- [ ] **7B: Expanded page capture**
+  - Expand capture beyond one fully visible page without automatic destructive
+    page interaction.
 - [ ] Evaluate on a larger separately licensed and human-reviewed corpus.
 
 ## Later milestone — real translation

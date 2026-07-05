@@ -17,6 +17,7 @@ const MAX_TEXT_CHARACTERS = 20_000;
 interface DetectionRegion {
   readonly id: string;
   readonly points: readonly (readonly [number, number])[];
+  readonly direction: "h" | "v";
 }
 
 export class DbnetOcr48pxProvider implements OcrProvider {
@@ -102,7 +103,7 @@ export class DbnetOcr48pxProvider implements OcrProvider {
     recognitionForm.append("regions", JSON.stringify(regions.map((region) => ({
       id: region.id,
       pts: region.points,
-      direction: "h",
+      direction: region.direction,
     }))));
     recognitionForm.append(
       "image",
@@ -199,6 +200,7 @@ function validateDetectionResponse(
         ids.has(raw.id) ||
         raw.detectorMode !== "genuine" ||
         raw.detectorInferenceRan !== true ||
+        (raw.direction !== "h" && raw.direction !== "v") ||
         !Array.isArray(raw.pts) ||
         raw.pts.length !== 4) {
       throw new OcrFailure("ocr-invalid-response");
@@ -214,7 +216,7 @@ function validateDetectionResponse(
     });
     ids.add(raw.id);
     normalizePoints(points, pixelWidth, pixelHeight);
-    return { id: raw.id, points };
+    return { id: raw.id, points, direction: raw.direction };
   });
 }
 
@@ -265,6 +267,7 @@ function validateRecognitionResponse(
         pixelWidth,
         pixelHeight
       ),
+      orientation: detection.direction === "v" ? "vertical" : "horizontal",
     });
   }
   if (regions.length === 0) throw new OcrFailure("ocr-no-text");

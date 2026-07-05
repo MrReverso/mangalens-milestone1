@@ -19,6 +19,7 @@ export interface OcrBounds {
 export interface OcrRegion {
   readonly text: string;
   readonly bounds: OcrBounds;
+  readonly orientation?: "horizontal" | "vertical";
 }
 
 export interface OcrResult {

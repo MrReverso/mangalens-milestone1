@@ -22,6 +22,18 @@ describe("future translation API validation", () => {
     expect(validateTranslationApiSuccessResponse(valid)).toEqual(valid);
   });
 
+  it("accepts known text orientations and rejects unknown values", () => {
+    const vertical = {
+      ...valid,
+      bubbles: [{ ...valid.bubbles[0], orientation: "vertical" }],
+    };
+    expect(validateTranslationApiSuccessResponse(vertical)).toEqual(vertical);
+    expect(validateTranslationApiSuccessResponse({
+      ...valid,
+      bubbles: [{ ...valid.bubbles[0], orientation: "diagonal" }],
+    })).toBeNull();
+  });
+
   it("rejects invalid normalized coordinates", () => {
     expect(validateTranslationApiSuccessResponse({
       ...valid,

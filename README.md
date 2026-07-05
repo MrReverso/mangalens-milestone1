@@ -155,6 +155,10 @@ use only the exact allowlisted `127.0.0.1:8002` detector and recognizer
 endpoints. Redirects, credentials, arbitrary endpoints, and unvalidated engine
 responses are rejected.
 
+Validated horizontal/vertical detector direction is preserved through the
+backend contract. Vertical OCR regions render with vertical writing geometry
+while retaining the same safe textarea editing behavior.
+
 Google Vision remains disabled by default. Setting the exact value
 `MANGALENS_ENABLE_GOOGLE_VISION=true` explicitly selects the remote development
 fallback instead of the local provider.

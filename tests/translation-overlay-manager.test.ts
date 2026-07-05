@@ -78,6 +78,26 @@ describe("TranslationOverlayManager", () => {
     manager.clear();
   });
 
+  it("uses detector-provided vertical writing geometry", () => {
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 500, 1000)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", image, [{
+      ...bubbles[0],
+      orientation: "vertical",
+    }]);
+
+    const bubble = document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    );
+    expect(bubble?.style.writingMode).toBe("vertical-rl");
+    expect(bubble?.style.textOrientation).toBe("mixed");
+    manager.clear();
+  });
+
   it("updates bubble positions after nested scrolling", () => {
     const reader = document.createElement("div");
     const image = document.createElement("img");

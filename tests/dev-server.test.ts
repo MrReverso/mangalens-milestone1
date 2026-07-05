@@ -254,6 +254,7 @@ describe("Development Server Handlers", () => {
         regions: [{
           id: "region-1",
           pts: [[10, 20], [70, 20], [70, 40], [10, 40]],
+          direction: "h",
           detectorMode: "genuine",
           detectorInferenceRan: true,
         }],
@@ -283,6 +284,7 @@ describe("Development Server Handlers", () => {
       pageId: "page-1",
       bubbles: [{
         bounds: { x: 0.1, y: 0.2, width: 0.6, height: 0.2 },
+        orientation: "horizontal",
         originalText: "読めます",
         translatedText: "読めます",
       }],
