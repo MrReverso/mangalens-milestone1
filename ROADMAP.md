@@ -28,7 +28,7 @@ deployed automatically.
   - Make the existing OCR action use the local provider by default.
   - Preserve editable overlays, current-tab edits, operation sequencing, and
     friendly structured errors.
-- [ ] **6D: End-to-end verification**
+- [x] **6D: End-to-end verification**
   - Test capture → loopback backend → DBNet/OCR48px → normalized bubbles.
   - Cover cancellation, timeout, unavailable engine, malformed responses,
     cleanup, and Google fallback opt-in.

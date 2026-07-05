@@ -129,11 +129,11 @@ docker compose down
 
 ## Next milestone
 
-Milestone 6D will verify the complete capture → loopback backend →
-DBNet/OCR48px → editable overlay flow, including cancellation, unavailable
-services, malformed responses, and cleanup. Capture and OCR placement quality
-will be improved only after that local-first path is stable. Real translation
-remains a separate, later reviewed milestone.
+Milestone 7 will improve capture and OCR placement quality, beginning with
+polygon-aware overlays, vertical-text geometry, reading order, and responsive
+text fitting. Expanding capture beyond one fully visible page requires a
+separate careful design because MangaLens must not scroll or alter reader pages
+destructively. Real translation remains a separate, later reviewed milestone.
 
 ## Milestone 6 local development
 
