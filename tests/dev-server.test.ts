@@ -192,6 +192,7 @@ describe("Development Server Handlers", () => {
       ocrProvider: "test-fake",
       ocrExecution: "local",
       ocrEnabled: true,
+      ocrReady: true,
     });
   });
 
@@ -216,9 +217,31 @@ describe("Development Server Handlers", () => {
         ocrProvider: "google-vision",
         ocrExecution: "remote",
         ocrEnabled: enabled,
+        ocrReady: enabled,
       });
     }
   );
+
+  it("GET /health reports local provider readiness without failing backend health", async () => {
+    const health = vi.fn(async () => false);
+    const handler = createTranslationRequestHandler({
+      ocrProvider: {
+        ...fakeProviderMetadata,
+        health,
+        recognize: vi.fn(async () => ({ regions: [] })),
+      },
+      logger: () => undefined,
+    });
+    const { res, getOutput } = createMockResponse();
+    await handler(createMockRequest({ method: "GET", url: "/health" }), res);
+    expect(getOutput().status).toBe(200);
+    expect(JSON.parse(getOutput().body)).toMatchObject({
+      status: "ok",
+      ocrProvider: "test-fake",
+      ocrReady: false,
+    });
+    expect(health).toHaveBeenCalledOnce();
+  });
 
   it("POST /v1/translate returns deterministic translations based on targetLanguage", async () => {
     const boundary = "WebKitFormBoundary123";

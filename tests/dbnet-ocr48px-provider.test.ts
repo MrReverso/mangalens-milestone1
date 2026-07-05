@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   DbnetOcr48pxProvider,
   MANGA_ENGINE_DETECT_ENDPOINT,
+  MANGA_ENGINE_HEALTH_ENDPOINT,
   MANGA_ENGINE_RECOGNIZE_ENDPOINT,
   validateMangaEngineEndpoint,
 } from "@/dev/backend/ocr/dbnet-ocr48px-provider";
@@ -54,6 +55,9 @@ function recognitionResponse(overrides: Record<string, unknown> = {}): unknown {
 describe("DBNet + OCR48px endpoint allowlist", () => {
   it("accepts only the two exact loopback endpoints", () => {
     expect(() => validateMangaEngineEndpoint(
+      MANGA_ENGINE_HEALTH_ENDPOINT
+    )).not.toThrow();
+    expect(() => validateMangaEngineEndpoint(
       MANGA_ENGINE_DETECT_ENDPOINT
     )).not.toThrow();
     expect(() => validateMangaEngineEndpoint(
@@ -73,6 +77,39 @@ describe("DBNet + OCR48px endpoint allowlist", () => {
 });
 
 describe("DbnetOcr48pxProvider", () => {
+  it("reports readiness only for a valid Manga Engine health response", async () => {
+    const healthy = new DbnetOcr48pxProvider(vi.fn(async () => jsonResponse({
+      status: "healthy",
+      engineVersion: "0.1.0",
+      engineCommit: "abcdef",
+    })));
+    await expect(healthy.health(new AbortController().signal))
+      .resolves.toBe(true);
+
+    for (const response of [
+      jsonResponse({ status: "healthy" }),
+      jsonResponse({ status: "unhealthy", engineVersion: "x", engineCommit: "y" }),
+      jsonResponse({}, 503),
+    ]) {
+      const provider = new DbnetOcr48pxProvider(
+        vi.fn(async () => response)
+      );
+      await expect(provider.health(new AbortController().signal))
+        .resolves.toBe(false);
+    }
+  });
+
+  it("maps health network failure to not-ready and preserves cancellation", async () => {
+    await expect(new DbnetOcr48pxProvider(
+      vi.fn(async () => { throw new Error("connection refused"); })
+    ).health(new AbortController().signal)).resolves.toBe(false);
+
+    const controller = new AbortController();
+    controller.abort();
+    await expect(new DbnetOcr48pxProvider(vi.fn()).health(controller.signal))
+      .rejects.toMatchObject({ name: "AbortError" });
+  });
+
   it("runs genuine default detection then OCR48px and normalizes bounds", async () => {
     const fetchImpl: typeof fetch = vi.fn()
       .mockResolvedValueOnce(jsonResponse(detectionResponse()))

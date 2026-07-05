@@ -76,6 +76,21 @@ async function handleRequest(
       logRequest(405, "method-not-allowed");
       return;
     }
+    const healthController = new AbortController();
+    const onHealthAborted = () => healthController.abort();
+    req.once("aborted", onHealthAborted);
+    const healthTimer = setTimeout(() => healthController.abort(), 1_500);
+    let ocrReady = ocrProvider.enabled;
+    try {
+      if (ocrProvider.health) {
+        ocrReady = await ocrProvider.health(healthController.signal);
+      }
+    } catch {
+      ocrReady = false;
+    } finally {
+      clearTimeout(healthTimer);
+      req.off("aborted", onHealthAborted);
+    }
     res.writeHead(200, {
       "Content-Type": "application/json",
       "Cache-Control": "no-store",
@@ -89,6 +104,7 @@ async function handleRequest(
         ocrProvider: ocrProvider.id,
         ocrExecution: ocrProvider.execution,
         ocrEnabled: ocrProvider.enabled,
+        ocrReady,
       })
     );
     logRequest(200);

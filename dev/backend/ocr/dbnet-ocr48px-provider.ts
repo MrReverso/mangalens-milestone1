@@ -3,6 +3,8 @@ import type { OcrBounds, OcrInput, OcrRegion, OcrResult } from "./ocr-types";
 import { OcrFailure } from "./ocr-errors";
 
 export const MANGA_ENGINE_ORIGIN = "http://127.0.0.1:8002";
+export const MANGA_ENGINE_HEALTH_ENDPOINT =
+  `${MANGA_ENGINE_ORIGIN}/health`;
 export const MANGA_ENGINE_DETECT_ENDPOINT =
   `${MANGA_ENGINE_ORIGIN}/detect`;
 export const MANGA_ENGINE_RECOGNIZE_ENDPOINT =
@@ -28,6 +30,46 @@ export class DbnetOcr48pxProvider implements OcrProvider {
   ) {
     if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0) {
       throw new OcrFailure("ocr-invalid-response");
+    }
+  }
+
+  async health(signal: AbortSignal): Promise<boolean> {
+    throwIfAborted(signal);
+    validateMangaEngineEndpoint(MANGA_ENGINE_HEALTH_ENDPOINT);
+    let response: Response;
+    try {
+      response = await this.fetchImpl(MANGA_ENGINE_HEALTH_ENDPOINT, {
+        method: "GET",
+        signal,
+        credentials: "omit",
+        redirect: "error",
+        cache: "no-store",
+        referrerPolicy: "no-referrer",
+      });
+    } catch (error: unknown) {
+      if (signal.aborted || isAbortError(error)) throw abortError();
+      return false;
+    }
+    throwIfAborted(signal);
+    if (response.redirected ||
+        response.status < 200 ||
+        response.status >= 300) {
+      return false;
+    }
+    try {
+      validateJsonContentType(response.headers.get("content-type"));
+      const value = await readJsonResponse(
+        response,
+        this.maxResponseBytes,
+        signal
+      );
+      return isRecord(value) &&
+        value.status === "healthy" &&
+        isNonEmptyString(value.engineVersion) &&
+        isNonEmptyString(value.engineCommit);
+    } catch (error: unknown) {
+      if (signal.aborted || isAbortError(error)) throw abortError();
+      return false;
     }
   }
 
@@ -121,7 +163,8 @@ export function validateMangaEngineEndpoint(value: string): void {
   } catch {
     throw new OcrFailure("ocr-invalid-response");
   }
-  if ((value !== MANGA_ENGINE_DETECT_ENDPOINT &&
+  if ((value !== MANGA_ENGINE_HEALTH_ENDPOINT &&
+       value !== MANGA_ENGINE_DETECT_ENDPOINT &&
        value !== MANGA_ENGINE_RECOGNIZE_ENDPOINT) ||
       url.protocol !== "http:" ||
       url.hostname !== "127.0.0.1" ||

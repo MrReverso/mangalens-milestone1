@@ -10,5 +10,6 @@ export interface OcrProvider {
   readonly id: OcrProviderId;
   readonly execution: OcrExecution;
   readonly enabled: boolean;
+  health?(signal: AbortSignal): Promise<boolean>;
   recognize(input: OcrInput, signal: AbortSignal): Promise<OcrResult>;
 }

@@ -14,13 +14,13 @@ deployed automatically.
 
 ## Milestone 6 — local DBNet + OCR48px MVP
 
-- [ ] **6A: Stable backend provider contract**
+- [x] **6A: Stable backend provider contract**
   - Add a strict local provider for the allowlisted loopback Manga Engine.
   - Validate detector/OCR responses at runtime and normalize trusted geometry.
   - Preserve cancellation, bounded response sizes, structured errors, and safe
     provider metadata.
   - Keep Google Vision disabled by default and explicitly selectable.
-- [ ] **6B: Local service readiness**
+- [x] **6B: Local service readiness**
   - Add meaningful health/readiness checks for the backend and Manga Engine.
   - Document and script the local Docker startup path without new Chrome
     permissions.

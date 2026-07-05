@@ -16,6 +16,7 @@
     "test:watch": "vitest",
     "fixture": "node scripts/serve-fixture.mjs",
     "dev:backend": "tsx dev/backend/server.ts",
+    "dev:ocr-engine": "docker compose -f services/ocr-benchmark/docker-compose.yml up --build manga-engine",
     "postinstall": "wxt prepare"
   },
   "dependencies": {
