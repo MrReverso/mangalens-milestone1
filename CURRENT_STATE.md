@@ -25,6 +25,14 @@
   DBNet + OCR48px pipeline applies editable overlays.
 - **Validation:** `pnpm compile`, `pnpm test` (349 tests), and `pnpm build`
   pass locally.
+- **Manual browser check (2026-07-10):** The local fixture loaded at
+  `http://127.0.0.1:4173/capture-test.html` and exposes fully visible, partial,
+  tall, and nested-reader images. The loopback health endpoint reported the
+  expected `ocrProvider: "dbnet-ocr48px"`, but `ocrReady: false` because this
+  environment has no `docker` executable for `pnpm dev:ocr-engine`. The only
+  available browser target cannot load unpacked Chrome extensions, so the
+  Chrome popup/overlay walkthrough (including guided assembly and backend
+  unavailable UI) remains pending on a machine with Docker and Chrome.
 - **Exact next task:** Commit and push this branch, open a draft PR stacked on
   PR #11, and manually exercise the long-page workflow against the local
   fixture when the local Docker engine is available.
