@@ -1,13 +1,13 @@
 # MangaLens Current State
 
-- **Current milestone:** Milestone 7B — expanded page capture is implemented
-  and awaiting review.
+- **Current milestone:** Milestone 7B awaits review; Milestone 8 has a
+  design-only proposal with no translation implementation.
 - **Completed work:** The strict local DBNet + OCR48px provider, bounded engine
   readiness probe, extension-facing local OCR action, editable page-session
   overlays, contract-flow verification, failure-path coverage, and manual
   Chrome walkthrough are complete.
-- **Current branch:** `codex/milestone-7b-expanded-capture`, stacked on
-  `codex/milestone-7a-polygon-overlays`.
+- **Current branch:** `codex/milestone-8-real-translation-design`, a
+  documentation-only branch stacked on `codex/milestone-7b-expanded-capture`.
 - **Current PR:** Draft PR #12, stacked on draft PR #11.
 - **Latest stable implementation commit:** `b67e610` hardens 7B cleanup for
   active-tab changes, tab closure, and failed assembly/backend paths.
@@ -33,6 +33,6 @@
   available browser target cannot load unpacked Chrome extensions, so the
   Chrome popup/overlay walkthrough (including guided assembly and backend
   unavailable UI) remains pending on a machine with Docker and Chrome.
-- **Exact next task:** Commit and push this branch, open a draft PR stacked on
-  PR #11, and manually exercise the long-page workflow against the local
-  fixture when the local Docker engine is available.
+- **Exact next task:** Finish PR #12 review/CI/manual Chrome validation and
+  merge the stacked OCR/capture PRs. Then review the Milestone 8 proposal before
+  creating `codex/milestone-8-real-translation-local-first` for implementation.
