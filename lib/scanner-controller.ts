@@ -24,11 +24,13 @@ import {
   captureRectsMatch,
   captureRectForImage,
   selectFirstFullyVisiblePage,
+  visibleSegmentForImage,
 } from "@/lib/capture/capture-eligibility";
 import { CaptureFailure, captureErrorCode } from "@/lib/capture/capture-errors";
 import type {
   CapturePrepareResponse,
   CaptureRestoreResponse,
+  CaptureSegmentPrepareResponse,
 } from "@/types/capture";
 import type { TranslationBubble } from "@/types/translation";
 import { validateTranslationApiSuccessResponse } from "@/types/translation-api";
@@ -118,6 +120,13 @@ export class MangaScannerController {
       case "PREPARE_VISIBLE_PAGE_CAPTURE":
         this.prepareVisiblePageCapture(message.captureToken)
           .then(sendResponse);
+        return true;
+      case "PREPARE_CAPTURE_SEGMENT":
+        this.prepareCaptureSegment(
+          message.captureToken,
+          message.sessionId,
+          message.expectedPageId
+        ).then(sendResponse);
         return true;
       case "RESTORE_AFTER_PAGE_CAPTURE":
         sendResponse(this.restoreAfterPageCapture(message.captureToken));
@@ -231,6 +240,96 @@ export class MangaScannerController {
     }
     this.forceRestoreCapture();
     return { success: true };
+  }
+
+  async prepareCaptureSegment(
+    captureToken: string,
+    sessionId: string,
+    expectedPageId: string | null
+  ): Promise<CaptureSegmentPrepareResponse> {
+    if (this.preparedCapture) {
+      return { success: false, error: { code: "capture-in-progress" } };
+    }
+    if (!captureToken.trim() || !sessionId.trim()) {
+      return { success: false, error: { code: "unexpected-error" } };
+    }
+    if (this.pages.size === 0) {
+      return { success: false, error: { code: "no-detected-pages" } };
+    }
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+    const ordered = [...this.pages.values()].sort(
+      (a, b) => a.pageNumber - b.pageNumber
+    );
+    const page = expectedPageId === null
+      ? ordered.find((candidate) =>
+        visibleSegmentForImage(candidate.element, viewportWidth, viewportHeight)
+      ) ?? null
+      : this.pages.get(expectedPageId) ?? null;
+    if (!page) {
+      return { success: false, error: { code: "stale-capture-session" } };
+    }
+    const selected = visibleSegmentForImage(
+      page.element,
+      viewportWidth,
+      viewportHeight
+    );
+    if (!selected) {
+      return { success: false, error: { code: "page-moved" } };
+    }
+
+    try {
+      this.translationOverlay.finishActiveEdit(true);
+      this.overlay.setCaptureSuppressed(true);
+      this.translationOverlay.setCaptureSuppressed(true);
+      const failsafeTimer = setTimeout(
+        () => this.forceRestoreCapture(),
+        10_000
+      );
+      this.preparedCapture = { captureToken, pageId: page.pageId, failsafeTimer };
+      await waitForAnimationFrames(2);
+      if (Math.abs(window.innerWidth - viewportWidth) > 1 ||
+          Math.abs(window.innerHeight - viewportHeight) > 1) {
+        throw new CaptureFailure("page-moved");
+      }
+      const finalPage = this.pages.get(page.pageId);
+      if (!finalPage || !finalPage.element.isConnected) {
+        throw new CaptureFailure("page-disconnected");
+      }
+      const final = visibleSegmentForImage(
+        finalPage.element,
+        viewportWidth,
+        viewportHeight
+      );
+      if (!final || !captureRectsMatch(selected.imageRect, final.imageRect) ||
+          !captureRectsMatch(selected.segmentRect, final.segmentRect) ||
+          Math.abs(selected.pageWidth - final.pageWidth) > 1 ||
+          Math.abs(selected.pageHeight - final.pageHeight) > 1 ||
+          selected.naturalWidth !== final.naturalWidth ||
+          selected.naturalHeight !== final.naturalHeight) {
+        throw new CaptureFailure("page-moved");
+      }
+      return {
+        success: true,
+        descriptor: {
+          captureToken,
+          sessionId,
+          pageId: finalPage.pageId,
+          pageNumber: finalPage.pageNumber,
+          imageRect: final.imageRect,
+          viewportWidth,
+          viewportHeight,
+          segmentRect: final.segmentRect,
+          pageWidth: final.pageWidth,
+          pageHeight: final.pageHeight,
+          naturalWidth: final.naturalWidth,
+          naturalHeight: final.naturalHeight,
+        },
+      };
+    } catch (error: unknown) {
+      this.forceRestoreCapture();
+      return { success: false, error: { code: captureErrorCode(error) } };
+    }
   }
 
   processImageCandidate(img: HTMLImageElement): void {

@@ -12,6 +12,13 @@ export function captureErrorMessage(code: CaptureErrorCode): string {
       return "The active tab changed. Return to the manga tab and try again";
     case "capture-too-large":
       return "This page is too large to capture";
+    case "low-overlap":
+      return "Keep more overlap with the previous segment";
+    case "stale-capture-session":
+      return "The page changed. Start the long-page capture again";
+    case "capture-session-not-found":
+    case "capture-session-cancelled":
+      return "The long-page capture session is no longer active";
     case "restricted-page":
       return "MangaLens cannot capture this page";
     case "timeout":

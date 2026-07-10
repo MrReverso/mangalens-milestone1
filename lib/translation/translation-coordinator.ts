@@ -184,20 +184,56 @@ export class TranslationCoordinator {
       return { success: false, error: { code: "unexpected-error" } };
     }
 
-    const expiresAt = Date.now() + this.timeoutMs;
+    return this.runOperation(request, async (operation, signal) =>
+      this.performTranslation(request, operation, signal)
+    );
+  }
 
+  /** Trusted-background entrypoint for an ephemeral assembled capture. */
+  async translateCapturedImage(
+    request: TranslateVisiblePageMessage,
+    captured: CapturedImage
+  ): Promise<BackgroundTranslationResponse> {
+    if (this.operations.has(request.tabId)) {
+      return { success: false, error: { code: "translation-in-progress" } };
+    }
+    if (request.serviceMode !== "development-api") {
+      return { success: false, error: { code: "invalid-service-mode" } };
+    }
+    return this.runOperation(request, async (operation, signal) => {
+      throwIfAborted(signal);
+      let operationSequence: number;
+      try {
+        operationSequence = await this.dependencies.nextOperationSequence(request.tabId);
+      } catch {
+        throw new TranslationPipelineFailure("unexpected-error");
+      }
+      await this.reportStage(request.tabId, "processing");
+      return this.completeTranslation(
+        request,
+        operation,
+        signal,
+        captured,
+        operationSequence
+      );
+    });
+  }
+
+  private async runOperation(
+    request: TranslateVisiblePageMessage,
+    workflowFactory: (
+      operation: TranslationOperation,
+      signal: AbortSignal
+    ) => Promise<BackgroundTranslationResponse>
+  ): Promise<BackgroundTranslationResponse> {
+    const expiresAt = Date.now() + this.timeoutMs;
     const operation: TranslationOperation = {
       controller: new AbortController(),
       retirementTimer: null,
       expiresAt,
     };
     this.operations.set(request.tabId, operation);
-
-    const workflow = this.performTranslation(
-      request,
-      operation,
-      operation.controller.signal
-    );
+    const workflow = workflowFactory(operation, operation.controller.signal);
     const outcome = workflow.then(
       (response) => ({ kind: "success" as const, response }),
       (error: unknown) => ({ kind: "error" as const, error })
@@ -210,20 +246,16 @@ export class TranslationCoordinator {
     });
     const first = await Promise.race([outcome, timeout]);
     if (timeoutTimer !== null) clearTimeout(timeoutTimer);
-
     if (first.kind === "timeout") {
       operation.controller.abort();
       this.startRetirementDeadline(request.tabId, operation);
-      const code = request.serviceMode === "development-api"
-        ? "ocr-timeout"
-        : "timeout";
-      return { success: false, error: { code } };
+      return {
+        success: false,
+        error: { code: request.serviceMode === "development-api" ? "ocr-timeout" : "timeout" },
+      };
     }
     if (first.kind === "success") return first.response;
-    return {
-      success: false,
-      error: { code: pipelineErrorCode(first.error) },
-    };
+    return { success: false, error: { code: pipelineErrorCode(first.error) } };
   }
 
   private async performTranslation(
@@ -232,14 +264,12 @@ export class TranslationCoordinator {
     signal: AbortSignal
   ): Promise<BackgroundTranslationResponse> {
     throwIfAborted(signal);
-
     let operationSequence: number;
     try {
       operationSequence = await this.dependencies.nextOperationSequence(request.tabId);
     } catch {
       throw new TranslationPipelineFailure("unexpected-error");
     }
-
     throwIfAborted(signal);
     await this.reportStage(request.tabId, "capturing");
     throwIfAborted(signal);
@@ -248,8 +278,17 @@ export class TranslationCoordinator {
       tabId: request.tabId,
       windowId: request.windowId,
     }, signal);
-    throwIfAborted(signal);
+    return this.completeTranslation(request, operation, signal, captured, operationSequence);
+  }
 
+  private async completeTranslation(
+    request: TranslateVisiblePageMessage,
+    operation: TranslationOperation,
+    signal: AbortSignal,
+    captured: CapturedImage,
+    operationSequence: number
+  ): Promise<BackgroundTranslationResponse> {
+    throwIfAborted(signal);
     let requestId: string;
     try {
       requestId = this.createRequestId();
@@ -266,22 +305,31 @@ export class TranslationCoordinator {
       capture: captured.metadata,
     });
     if (!metadata) throw new TranslationPipelineFailure("invalid-language");
-
     throwIfAborted(signal);
     await this.reportStage(request.tabId, "processing");
+    throwIfAborted(signal);
+    return this.processAndApply(
+      request, operation, signal, captured, metadata, requestId, operationSequence
+    );
+  }
+
+  private async processAndApply(
+    request: TranslateVisiblePageMessage,
+    operation: TranslationOperation,
+    signal: AbortSignal,
+    captured: CapturedImage,
+    metadata: NonNullable<ReturnType<typeof validateTranslationApiRequestMetadata>>,
+    requestId: string,
+    operationSequence: number
+  ): Promise<BackgroundTranslationResponse> {
     throwIfAborted(signal);
     let rawResponse: unknown;
     try {
       const service = this.dependencies.services[request.serviceMode];
-      rawResponse = await service.translate({
-        image: captured.blob,
-        metadata,
-      }, signal);
+      rawResponse = await service.translate({ image: captured.blob, metadata }, signal);
     } catch (error: unknown) {
       if (signal.aborted || isAbortError(error)) {
-        throw new TranslationPipelineFailure(
-          request.serviceMode === "development-api" ? "ocr-timeout" : "timeout"
-        );
+        throw new TranslationPipelineFailure("ocr-timeout");
       }
       if (error instanceof Error && isBackendErrorCode(error.message)) {
         throw new TranslationPipelineFailure(error.message as TranslationPipelineErrorCode);
@@ -290,47 +338,30 @@ export class TranslationCoordinator {
     }
     throwIfAborted(signal);
     const response = validateTranslationApiSuccessResponse(rawResponse);
-    if (!response ||
-        response.requestId !== requestId ||
-        response.pageId !== metadata.pageId) {
-      if (request.serviceMode === "development-api") {
-        throw new TranslationPipelineFailure("backend-invalid-response");
-      }
-      throw new TranslationPipelineFailure("invalid-translation-response");
+    if (!response || response.requestId !== requestId || response.pageId !== metadata.pageId) {
+      throw new TranslationPipelineFailure(
+        request.serviceMode === "development-api"
+          ? "backend-invalid-response" : "invalid-translation-response"
+      );
     }
-
-    throwIfAborted(signal);
     await this.reportStage(request.tabId, "applying");
-    throwIfAborted(signal);
     const applyRaw = await this.dependencies.sendToTab(request.tabId, {
-      type: "APPLY_TRANSLATION_RESULT",
-      contractVersion: 1,
-      requestId,
-      pageId: response.pageId,
-      bubbles: response.bubbles,
-      expiresAt: operation.expiresAt,
-      operationSequence,
+      type: "APPLY_TRANSLATION_RESULT", contractVersion: 1, requestId,
+      pageId: response.pageId, bubbles: response.bubbles,
+      expiresAt: operation.expiresAt, operationSequence,
     });
-    throwIfAborted(signal);
-    if (!isApplyTranslationResultResponse(applyRaw)) {
-      throw new TranslationPipelineFailure("apply-failed");
-    }
-    if (!applyRaw.success) {
-      throw new TranslationPipelineFailure(applyRaw.error.code);
-    }
-    if (applyRaw.pageId !== response.pageId ||
+    if (!isApplyTranslationResultResponse(applyRaw) || !applyRaw.success ||
+        applyRaw.pageId !== response.pageId ||
         applyRaw.bubbleCount !== response.bubbles.length) {
-      throw new TranslationPipelineFailure("apply-failed");
+      throw new TranslationPipelineFailure(
+        isApplyTranslationResultResponse(applyRaw) && !applyRaw.success
+          ? applyRaw.error.code : "apply-failed"
+      );
     }
-    throwIfAborted(signal);
     return {
-      success: true,
-      pageId: response.pageId,
-      pageNumber: metadata.pageNumber,
+      success: true, pageId: response.pageId, pageNumber: metadata.pageNumber,
       bubbleCount: response.bubbles.length,
-      resultKind: request.serviceMode === "local-demo"
-        ? "local-demo"
-        : "ocr-preview",
+      resultKind: request.serviceMode === "local-demo" ? "local-demo" : "ocr-preview",
       serviceMode: request.serviceMode,
     };
   }

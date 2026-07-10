@@ -8,8 +8,14 @@ import type {
   BackgroundCaptureResponse,
   CapturePrepareResponse,
   CaptureRestoreResponse,
+  CaptureSegmentPrepareResponse,
+  SegmentedCaptureSessionStatus,
 } from "@/types/capture";
-import { isNonEmptyString, isPositiveInteger } from "@/types/capture";
+import {
+  isNonEmptyString,
+  isPositiveInteger,
+  isSegmentedCaptureSessionStatus,
+} from "@/types/capture";
 import type {
   ApplyTranslationResultMessage,
   ApplyTranslationResultResponse,
@@ -17,6 +23,8 @@ import type {
   TranslateVisiblePageMessage,
 } from "@/types/translation-pipeline";
 import {
+  isSourceLanguage,
+  isTargetLanguage,
   isTranslateVisiblePageMessage,
   validateApplyTranslationResultMessage,
 } from "@/types/translation-pipeline";
@@ -62,11 +70,57 @@ export interface RestoreAfterPageCaptureMessage {
   readonly captureToken: string;
 }
 
+export interface PrepareCaptureSegmentMessage {
+  readonly type: "PREPARE_CAPTURE_SEGMENT";
+  readonly captureToken: string;
+  readonly sessionId: string;
+  readonly expectedPageId: string | null;
+}
+
 export interface CaptureFirstVisiblePageMessage {
   readonly type: "CAPTURE_FIRST_VISIBLE_PAGE";
   readonly tabId: number;
   readonly windowId: number;
 }
+
+export interface StartExpandedCaptureMessage {
+  readonly type: "START_EXPANDED_CAPTURE";
+  readonly tabId: number;
+  readonly windowId: number;
+  readonly sourceLanguage: SourceLanguage;
+  readonly targetLanguage: TargetLanguage;
+  readonly serviceMode: "development-api";
+}
+
+export interface CaptureExpandedSegmentMessage {
+  readonly type: "CAPTURE_EXPANDED_SEGMENT";
+  readonly tabId: number;
+  readonly windowId: number;
+  readonly sessionId: string;
+}
+
+export interface FinishExpandedCaptureMessage {
+  readonly type: "FINISH_EXPANDED_CAPTURE";
+  readonly tabId: number;
+  readonly windowId: number;
+  readonly sessionId: string;
+}
+
+export interface CancelExpandedCaptureMessage {
+  readonly type: "CANCEL_EXPANDED_CAPTURE";
+  readonly tabId: number;
+  readonly sessionId: string;
+}
+
+export interface GetExpandedCaptureStatusMessage {
+  readonly type: "GET_EXPANDED_CAPTURE_STATUS";
+  readonly tabId: number;
+  readonly windowId: number;
+}
+
+export type ExpandedCaptureResponse =
+  | { readonly success: true; readonly status: SegmentedCaptureSessionStatus }
+  | { readonly success: false; readonly error: { readonly code: string } };
 
 // ── Responses (content → popup) ────────────────────────────────
 
@@ -113,6 +167,7 @@ export type PopupToContentMessage =
 
 export type BackgroundToContentMessage =
   | PrepareVisiblePageCaptureMessage
+  | PrepareCaptureSegmentMessage
   | RestoreAfterPageCaptureMessage
   | ApplyTranslationResultMessage;
 
@@ -122,13 +177,19 @@ export type ContentScriptMessage =
 
 export type PopupToBackgroundMessage =
   | CaptureFirstVisiblePageMessage
-  | TranslateVisiblePageMessage;
+  | TranslateVisiblePageMessage
+  | StartExpandedCaptureMessage
+  | CaptureExpandedSegmentMessage
+  | FinishExpandedCaptureMessage
+  | CancelExpandedCaptureMessage
+  | GetExpandedCaptureStatusMessage;
 
 export type ExtensionMessage = PopupToContentMessage;
 export type ScanPageResponse = ScanSuccessResponse | ScanErrorResponse;
 
 export type CaptureContentResponse =
   | CapturePrepareResponse
+  | CaptureSegmentPrepareResponse
   | CaptureRestoreResponse;
 
 export type { BackgroundCaptureResponse };
@@ -147,6 +208,7 @@ const CONTENT_MESSAGE_TYPES = new Set<string>([
   "CLEAR_TRANSLATIONS",
   "GET_TRANSLATION_STATUS",
   "PREPARE_VISIBLE_PAGE_CAPTURE",
+  "PREPARE_CAPTURE_SEGMENT",
   "RESTORE_AFTER_PAGE_CAPTURE",
   "APPLY_TRANSLATION_RESULT",
 ]);
@@ -160,6 +222,12 @@ export function isContentScriptMessage(
   if (value.type === "PREPARE_VISIBLE_PAGE_CAPTURE" ||
       value.type === "RESTORE_AFTER_PAGE_CAPTURE") {
     return "captureToken" in value && isNonEmptyString(value.captureToken);
+  }
+  if (value.type === "PREPARE_CAPTURE_SEGMENT") {
+    return "captureToken" in value && isNonEmptyString(value.captureToken) &&
+      "sessionId" in value && isNonEmptyString(value.sessionId) &&
+      "expectedPageId" in value &&
+      (value.expectedPageId === null || isNonEmptyString(value.expectedPageId));
   }
   if (value.type === "APPLY_TRANSLATION_RESULT") {
     return validateApplyTranslationResultMessage(value) !== null;
@@ -180,5 +248,78 @@ export function isPopupToBackgroundMessage(
   value: unknown
 ): value is PopupToBackgroundMessage {
   return isCaptureFirstVisiblePageMessage(value) ||
-    isTranslateVisiblePageMessage(value);
+    isTranslateVisiblePageMessage(value) ||
+    isStartExpandedCaptureMessage(value) ||
+    isCaptureExpandedSegmentMessage(value) ||
+    isFinishExpandedCaptureMessage(value) ||
+    isCancelExpandedCaptureMessage(value) ||
+    isGetExpandedCaptureStatusMessage(value);
+}
+
+export function isStartExpandedCaptureMessage(
+  value: unknown
+): value is StartExpandedCaptureMessage {
+  return isRecordWithKeys(value, [
+    "type", "tabId", "windowId", "sourceLanguage", "targetLanguage", "serviceMode",
+  ]) && value.type === "START_EXPANDED_CAPTURE" &&
+    isPositiveInteger(value.tabId) && isPositiveInteger(value.windowId) &&
+    isSourceLanguage(value.sourceLanguage) && isTargetLanguage(value.targetLanguage) &&
+    value.serviceMode === "development-api";
+}
+
+export function isCaptureExpandedSegmentMessage(
+  value: unknown
+): value is CaptureExpandedSegmentMessage {
+  return isRecordWithKeys(value, ["type", "tabId", "windowId", "sessionId"]) &&
+    value.type === "CAPTURE_EXPANDED_SEGMENT" &&
+    isPositiveInteger(value.tabId) && isPositiveInteger(value.windowId) &&
+    isNonEmptyString(value.sessionId);
+}
+
+export function isFinishExpandedCaptureMessage(
+  value: unknown
+): value is FinishExpandedCaptureMessage {
+  return isRecordWithKeys(value, ["type", "tabId", "windowId", "sessionId"]) &&
+    value.type === "FINISH_EXPANDED_CAPTURE" &&
+    isPositiveInteger(value.tabId) && isPositiveInteger(value.windowId) &&
+    isNonEmptyString(value.sessionId);
+}
+
+export function isCancelExpandedCaptureMessage(
+  value: unknown
+): value is CancelExpandedCaptureMessage {
+  return isRecordWithKeys(value, ["type", "tabId", "sessionId"]) &&
+    value.type === "CANCEL_EXPANDED_CAPTURE" &&
+    isPositiveInteger(value.tabId) && isNonEmptyString(value.sessionId);
+}
+
+export function isGetExpandedCaptureStatusMessage(
+  value: unknown
+): value is GetExpandedCaptureStatusMessage {
+  return isRecordWithKeys(value, ["type", "tabId", "windowId"]) &&
+    value.type === "GET_EXPANDED_CAPTURE_STATUS" &&
+    isPositiveInteger(value.tabId) && isPositiveInteger(value.windowId);
+}
+
+export function isExpandedCaptureResponse(
+  value: unknown
+): value is ExpandedCaptureResponse {
+  if (typeof value !== "object" || value === null ||
+      !("success" in value) || typeof value.success !== "boolean") return false;
+  if (value.success) {
+    return Object.keys(value).length === 2 && "status" in value &&
+      isSegmentedCaptureSessionStatus(value.status);
+  }
+  return Object.keys(value).length === 2 && "error" in value &&
+    typeof value.error === "object" && value.error !== null &&
+    "code" in value.error && typeof value.error.code === "string";
+}
+
+function isRecordWithKeys(
+  value: unknown,
+  keys: readonly string[]
+): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null &&
+    Object.keys(value).length === keys.length &&
+    keys.every((key) => key in value);
 }

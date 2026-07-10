@@ -2,8 +2,8 @@
 
 MangaLens is a Chrome Manifest V3 prototype for testing manga, manhwa, webtoon,
 and comic OCR experiences. The extension can detect page images, capture a fully
-visible page, render OCR text as editable overlays, and preserve edits for the
-current tab session.
+visible page or user-guided overlapping visible segments, render OCR text as
+editable overlays, and preserve edits for the current tab session.
 
 Milestone 5 adds isolated Docker services and a reproducible multilingual
 benchmark for local text detection and OCR. It does not add real translation or
@@ -119,8 +119,11 @@ docker compose down
 
 ## Current limitations
 
-- Only a fully visible detected page can be captured; there is no page
-  stitching or automatic scrolling.
+- Larger pages can use **Start Long-Page OCR**. Capture the current visible
+  segment, scroll manually with a small overlap, capture the next segment, and
+  finish when ready. The extension never auto-scrolls or fetches source images.
+  Segment PNGs remain only in background memory and are discarded after finish,
+  cancellation, expiry, or failure.
 - OCR edits persist only for the current tab session.
 - Google Vision is a development-only comparison and remains disabled by
   default.
@@ -129,11 +132,9 @@ docker compose down
 
 ## Next milestone
 
-Milestone 7 will improve capture and OCR placement quality, beginning with
-polygon-aware overlays, vertical-text geometry, reading order, and responsive
-text fitting. Expanding capture beyond one fully visible page requires a
-separate careful design because MangaLens must not scroll or alter reader pages
-destructively. Real translation remains a separate, later reviewed milestone.
+Milestone 7 includes polygon-aware overlays, vertical-text geometry, reading
+order, responsive text fitting, and user-guided expanded capture. Real
+translation remains a separate, later reviewed milestone.
 
 ## Milestone 6 local development
 
@@ -182,6 +183,10 @@ fallback instead of the local provider.
    after hiding/showing overlays and scrolling the nested reader.
 7. Stop Manga Engine and retry to confirm the popup reports a friendly local
    OCR failure without exposing raw errors.
+8. For a page taller than the viewport, choose **Start Long-Page OCR**, capture
+   a segment, manually scroll with overlap, capture another segment, then choose
+   **Finish Long-Page OCR**. Confirm bubbles are still editable and that cancel
+   clears the session without retaining images.
 
 The fixture uses only local synthetic SVG pages. Its text and layout are useful
 for transport, positioning, and cleanup checks, not for judging OCR accuracy.

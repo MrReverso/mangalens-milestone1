@@ -3,6 +3,10 @@ import {
   createBackgroundCaptureMessageHandler,
 } from "@/lib/capture/capture-coordinator";
 import { BrowserScreenshotCropper } from "@/lib/capture/screenshot-cropper";
+import {
+  SegmentedCaptureCoordinator,
+  createExpandedCaptureMessageHandler,
+} from "@/lib/capture/segmented-capture-coordinator";
 import { initializeDefaultSettings } from "@/lib/storage";
 import { LocalDeterministicTranslationService } from "@/lib/translation/local-deterministic-translation-service";
 import {
@@ -17,6 +21,7 @@ const DEV_TRANSLATION_API_URL = "http://127.0.0.1:8787/v1/translate";
 
 export default defineBackground(() => {
   let translationCoordinator: TranslationCoordinator | null = null;
+  let segmentedCoordinator: SegmentedCaptureCoordinator | null = null;
   const coordinator = new CaptureCoordinator({
     isTabActive: async (tabId, windowId) => {
       const tabs = await chrome.tabs.query({ active: true, windowId });
@@ -51,7 +56,23 @@ export default defineBackground(() => {
         stage,
       }).catch(() => undefined);
     },
-    isCaptureActive: (tabId) => coordinator.isActive(tabId),
+    isCaptureActive: (tabId) =>
+      coordinator.isActive(tabId) || segmentedCoordinator?.isActive(tabId) === true,
+  });
+  segmentedCoordinator = new SegmentedCaptureCoordinator({
+    isTabActive: async (tabId, windowId) => {
+      const tabs = await chrome.tabs.query({ active: true, windowId });
+      return tabs.some((tab) => tab.id === tabId);
+    },
+    sendToTab: (tabId, message) => chrome.tabs.sendMessage(tabId, message),
+    captureVisibleTab: (windowId) => chrome.tabs.captureVisibleTab(windowId, {
+      format: "png",
+    }),
+    cropper: new BrowserScreenshotCropper(),
+    translateCapturedImage: (request, captured) =>
+      translationCoordinator!.translateCapturedImage(request, captured),
+    isTabReserved: (tabId) =>
+      coordinator.isActive(tabId) || translationCoordinator?.isActive(tabId) === true,
   });
 
   chrome.runtime.onInstalled.addListener(async (details) => {
@@ -66,4 +87,10 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener(
     createBackgroundTranslationMessageHandler(translationCoordinator)
   );
+  chrome.runtime.onMessage.addListener(
+    createExpandedCaptureMessageHandler(segmentedCoordinator)
+  );
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    segmentedCoordinator?.abortTab(tabId);
+  });
 });

@@ -8,6 +8,15 @@ export interface CapturePageCandidate {
   readonly element: HTMLImageElement;
 }
 
+export interface VisibleSegment {
+  readonly imageRect: CaptureViewportRect;
+  readonly segmentRect: CaptureViewportRect;
+  readonly pageWidth: number;
+  readonly pageHeight: number;
+  readonly naturalWidth: number;
+  readonly naturalHeight: number;
+}
+
 export function captureRectForImage(
   image: HTMLImageElement,
   viewportWidth = window.innerWidth,
@@ -33,6 +42,48 @@ export function captureRectForImage(
     left: Math.max(0, rect.left),
     width: rect.width,
     height: rect.height,
+  };
+}
+
+/**
+ * Returns the currently visible portion of an image. Unlike the one-shot
+ * capture helper, partial visibility is intentional here: the user advances
+ * the page manually between captures.
+ */
+export function visibleSegmentForImage(
+  image: HTMLImageElement,
+  viewportWidth = window.innerWidth,
+  viewportHeight = window.innerHeight
+): VisibleSegment | null {
+  if (!image.isConnected || !image.complete ||
+      image.naturalWidth <= 0 || image.naturalHeight <= 0) return null;
+  const style = window.getComputedStyle(image);
+  if (style.display === "none" || style.visibility === "hidden" ||
+      Number.parseFloat(style.opacity || "1") <= 0) return null;
+  const rect = image.getBoundingClientRect();
+  const values = [
+    rect.top, rect.left, rect.right, rect.bottom, rect.width, rect.height,
+    viewportWidth, viewportHeight,
+  ];
+  if (!values.every(Number.isFinite) || rect.width <= 0 || rect.height <= 0 ||
+      viewportWidth <= 0 || viewportHeight <= 0) return null;
+  const left = Math.max(0, rect.left);
+  const top = Math.max(0, rect.top);
+  const right = Math.min(viewportWidth, rect.right);
+  const bottom = Math.min(viewportHeight, rect.bottom);
+  if (right - left <= 1 || bottom - top <= 1) return null;
+  return {
+    imageRect: { top, left, width: right - left, height: bottom - top },
+    segmentRect: {
+      top: top - rect.top,
+      left: left - rect.left,
+      width: right - left,
+      height: bottom - top,
+    },
+    pageWidth: rect.width,
+    pageHeight: rect.height,
+    naturalWidth: image.naturalWidth,
+    naturalHeight: image.naturalHeight,
   };
 }
 
