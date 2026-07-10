@@ -1,0 +1,95 @@
+{
+  "dummy_manga_page.png": {
+    "manga-image-translator-default": {
+      "engine": "manga-image-translator-default",
+      "status": "success",
+      "synthetic": true,
+      "engineVersion": "0.1.0",
+      "engineCommit": "efdc229de8aa0f3d4051ad97664adc62dd5ac605",
+      "device": "cpu",
+      "regions": [
+        {
+          "id": "region_1",
+          "polygon": {
+            "points": [
+              {
+                "x": 120,
+                "y": 120
+              },
+              {
+                "x": 360,
+                "y": 120
+              },
+              {
+                "x": 360,
+                "y": 300
+              },
+              {
+                "x": 120,
+                "y": 300
+              }
+            ]
+          },
+          "boundingBox": {
+            "x": 120,
+            "y": 120,
+            "width": 240,
+            "height": 180
+          },
+          "text": "\ubb34\uc5c7\uc744\uc694?",
+          "confidence": 0.95,
+          "orientation": "horizontal",
+          "detector": "mock-detector",
+          "recognizer": "mock-recognizer",
+          "detectorVersion": "0.1.0",
+          "recognizerVersion": "0.1.0"
+        },
+        {
+          "id": "region_2",
+          "polygon": {
+            "points": [
+              {
+                "x": 540,
+                "y": 600
+              },
+              {
+                "x": 640,
+                "y": 750
+              },
+              {
+                "x": 540,
+                "y": 900
+              },
+              {
+                "x": 440,
+                "y": 750
+              }
+            ]
+          },
+          "boundingBox": {
+            "x": 440,
+            "y": 600,
+            "width": 200,
+            "height": 300
+          },
+          "text": "\uc9c0\uae08 \ucd9c\ubc1c\ud574\uc57c \ud569\ub2c8\ub2e4.",
+          "confidence": 0.88,
+          "orientation": "vertical",
+          "detector": "mock-detector",
+          "recognizer": "mock-recognizer",
+          "detectorVersion": "0.1.0",
+          "recognizerVersion": "0.1.0"
+        }
+      ],
+      "errors": [],
+      "processingTimeMs": 15,
+      "imageWidth": 800,
+      "imageHeight": 1200,
+      "annotatedPath": "./results/demo/annotated_manga-image-translator-default_dummy_manga_page.png",
+      "detector": "mock-detector",
+      "recognizer": "mock-recognizer",
+      "detectorVersion": "0.1.0",
+      "recognizerVersion": "0.1.0"
+    }
+  }
+}

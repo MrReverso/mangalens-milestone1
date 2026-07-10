@@ -1,0 +1,164 @@
+{
+  "datasetVersion": 1,
+  "samples": [
+    {
+      "filename": "japanese_manga_page.png",
+      "language": "ja",
+      "sampleType": "self-created-synthetic-page",
+      "license": "CC0-1.0",
+      "source": "Created by the MangaLens project; no third-party artwork",
+      "groundTruthRegions": [
+        {
+          "id": "ground_truth_1",
+          "text": "こんにちは",
+          "polygon": [
+            [
+              127,
+              153
+            ],
+            [
+              493,
+              153
+            ],
+            [
+              493,
+              233
+            ],
+            [
+              127,
+              233
+            ]
+          ]
+        },
+        {
+          "id": "ground_truth_2",
+          "text": "行こう！",
+          "polygon": [
+            [
+              547,
+              816
+            ],
+            [
+              847,
+              816
+            ],
+            [
+              847,
+              902
+            ],
+            [
+              547,
+              902
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "filename": "korean_webtoon_page.png",
+      "language": "ko",
+      "sampleType": "self-created-synthetic-page",
+      "license": "CC0-1.0",
+      "source": "Created by the MangaLens project; no third-party artwork",
+      "groundTruthRegions": [
+        {
+          "id": "ground_truth_1",
+          "text": "안녕하세요",
+          "polygon": [
+            [
+              127,
+              154
+            ],
+            [
+              448,
+              154
+            ],
+            [
+              448,
+              237
+            ],
+            [
+              127,
+              237
+            ]
+          ]
+        },
+        {
+          "id": "ground_truth_2",
+          "text": "같이 가자!",
+          "polygon": [
+            [
+              547,
+              974
+            ],
+            [
+              845,
+              974
+            ],
+            [
+              845,
+              1057
+            ],
+            [
+              547,
+              1057
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "filename": "english_comic_page.png",
+      "language": "en",
+      "sampleType": "self-created-synthetic-page",
+      "license": "CC0-1.0",
+      "source": "Created by the MangaLens project; no third-party artwork",
+      "groundTruthRegions": [
+        {
+          "id": "ground_truth_1",
+          "text": "HELLO THERE",
+          "polygon": [
+            [
+              127,
+              159
+            ],
+            [
+              628,
+              159
+            ],
+            [
+              628,
+              233
+            ],
+            [
+              127,
+              233
+            ]
+          ]
+        },
+        {
+          "id": "ground_truth_2",
+          "text": "LET'S GO!",
+          "polygon": [
+            [
+              547,
+              824
+            ],
+            [
+              909,
+              824
+            ],
+            [
+              909,
+              898
+            ],
+            [
+              547,
+              898
+            ]
+          ]
+        }
+      ]
+    }
+  ]
+}
