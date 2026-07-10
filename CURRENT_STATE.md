@@ -1,14 +1,18 @@
 # MangaLens Current State
 
-- **Current milestone:** Milestone 7B — expanded page capture is implemented
-  and awaiting review.
+- **Current milestone:** Milestone 8 — deterministic local translation preview
+  is being added after the landed OCR and capture stack.
 - **Completed work:** The strict local DBNet + OCR48px provider, bounded engine
   readiness probe, extension-facing local OCR action, editable page-session
   overlays, contract-flow verification, failure-path coverage, and manual
   Chrome walkthrough are complete.
-- **Current branch:** `codex/milestone-7b-expanded-capture`, stacked on
-  `codex/milestone-7a-polygon-overlays`.
-- **Current PR:** Draft PR #12, stacked on draft PR #11.
+- **Current branch:** `codex/milestone-8-real-translation-local-first`, based
+  on latest `main` after PRs #9–#12.
+- **Current PR:** Not yet opened for Milestone 8.
+- **Milestone 8 slice:** A backend-only deterministic local translation preview
+  runs after OCR. It receives only bubble IDs and OCR text, preserves OCR
+  geometry, and safely falls back to OCR text when translation output is
+  malformed or unavailable. It has no remote provider, credentials, or storage.
 - **Latest stable implementation commit:** `b67e610` hardens 7B cleanup for
   active-tab changes, tab closure, and failed assembly/backend paths.
 - **Latest CI:** PR #12 is clean and mergeable. Both `verify` and
@@ -39,6 +43,6 @@
   image fetching, automatic scrolling, raw-image/OCR-text logging, or image/OCR
   persistence. Full manual OCR confirmation remains blocked by missing Docker
   and an unavailable unpacked-extension Chrome target.
-- **Exact next task:** Commit and push this branch, open a draft PR stacked on
-  PR #11, and manually exercise the long-page workflow against the local
-  fixture when the local Docker engine is available.
+- **Exact next task:** Run final verification, open the Milestone 8 draft PR,
+  then manually confirm translated-preview, OCR fallback, edits, and long-page
+  behavior on a machine with Docker and Chrome.

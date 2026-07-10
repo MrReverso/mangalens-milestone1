@@ -444,7 +444,17 @@ export default function App() {
         return;
       }
       setHasTranslations(true);
-      if (rawResponse.resultKind === "ocr-preview") {
+      if (rawResponse.resultKind === "translated-preview") {
+        setStatus({
+          kind: "success",
+          message: `Local translation preview applied to ${rawResponse.bubbleCount} text regions`,
+        });
+      } else if (rawResponse.resultKind === "ocr-fallback") {
+        setStatus({
+          kind: "success",
+          message: `OCR detected ${rawResponse.bubbleCount} text regions · Translation unavailable`,
+        });
+      } else if (rawResponse.resultKind === "ocr-preview") {
         setStatus({
           kind: "success",
           message: `OCR detected ${rawResponse.bubbleCount} text regions ` +

@@ -361,7 +361,13 @@ export class TranslationCoordinator {
     return {
       success: true, pageId: response.pageId, pageNumber: metadata.pageNumber,
       bubbleCount: response.bubbles.length,
-      resultKind: request.serviceMode === "local-demo" ? "local-demo" : "ocr-preview",
+      resultKind: request.serviceMode === "local-demo"
+        ? "local-demo"
+        : response.translation?.status === "translated"
+          ? "translated-preview"
+          : response.translation?.status === "unavailable"
+            ? "ocr-fallback"
+            : "ocr-preview",
       serviceMode: request.serviceMode,
     };
   }

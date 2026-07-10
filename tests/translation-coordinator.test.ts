@@ -115,6 +115,26 @@ describe("TranslationCoordinator", () => {
     });
   });
 
+  it("reports translated preview only when the backend declares a validated translation stage", async () => {
+    const service = {
+      translate: vi.fn(async (input) => ({
+        contractVersion: 1,
+        requestId: input.metadata.requestId,
+        pageId: input.metadata.pageId,
+        bubbles,
+        translation: {
+          providerId: "deterministic-local-preview",
+          execution: "local",
+          status: "translated",
+        },
+      })),
+    };
+    const result = await new TranslationCoordinator(dependencies({
+      services: { "local-demo": service, "development-api": service },
+    })).translate({ ...request, serviceMode: "development-api" });
+    expect(result).toMatchObject({ resultKind: "translated-preview" });
+  });
+
   it("builds matching validated request metadata", async () => {
     let seen: TranslationApiRequestMetadata | null = null;
     const mockService = {

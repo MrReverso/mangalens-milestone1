@@ -51,10 +51,12 @@ deployed automatically.
     backend failures, and service-worker memory loss.
 - [ ] Evaluate on a larger separately licensed and human-reviewed corpus.
 
-## Later milestone — real translation
+## Milestone 8 — local-first translation foundation
 
-- [ ] Define and review a separate real-translation architecture only after the
-  local OCR MVP is stable.
+- [ ] Add a backend-owned translation provider after OCR.
+  - The initial deterministic local preview provider has no network or
+    credentials and exists only to validate the post-OCR pipeline.
+  - Remote/paid providers remain separate explicit opt-ins after review.
 - [ ] Do not add accounts, billing, deployment, or paid providers without an
   explicit product decision.
 

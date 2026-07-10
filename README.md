@@ -3,7 +3,10 @@
 MangaLens is a Chrome Manifest V3 prototype for testing manga, manhwa, webtoon,
 and comic OCR experiences. The extension can detect page images, capture a fully
 visible page or user-guided overlapping visible segments, render OCR text as
-editable overlays, and preserve edits for the current tab session.
+editable overlays, and preserve edits for the current tab session. The local
+development backend also includes a deterministic post-OCR translation preview
+(`[translated preview] <OCR text>`); it is pipeline wiring only, not a real
+language translation service.
 
 Milestone 5 adds isolated Docker services and a reproducible multilingual
 benchmark for local text detection and OCR. It does not add real translation or
@@ -127,7 +130,7 @@ docker compose down
 - OCR edits persist only for the current tab session.
 - Google Vision is a development-only comparison and remains disabled by
   default.
-- Real translation, production deployment, accounts, billing, durable
+- Production-quality translation, production deployment, accounts, billing, durable
   persistence, analytics, downloads, and image inpainting are not implemented.
 
 ## Next milestone

@@ -34,6 +34,7 @@ describe("OCR extension UX and privacy boundary", () => {
     expect(popup).toContain("Processing OCR");
     expect(popup).toContain("Applying OCR Preview");
     expect(popup).toContain("Translation not enabled");
+    expect(popup).toContain("Local translation preview applied");
     expect(popup).toContain('rawResponse.resultKind === "ocr-preview"');
   });
 

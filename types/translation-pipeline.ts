@@ -9,7 +9,7 @@ import type { TranslationBubble } from "@/types/translation";
 import { validateTranslationApiSuccessResponse } from "@/types/translation-api";
 
 export type TranslationServiceMode = "local-demo" | "development-api";
-export type TranslationResultKind = "local-demo" | "ocr-preview";
+export type TranslationResultKind = "local-demo" | "ocr-preview" | "translated-preview" | "ocr-fallback";
 
 export type TranslationPipelineStage = "capturing" | "processing" | "applying";
 
@@ -57,6 +57,8 @@ export type TranslationPipelineErrorCode =
   | "invalid-service-mode"
   | "invalid-translation-response"
   | "translation-service-failed"
+  | "translation-provider-unavailable"
+  | "translation-invalid-response"
   | "target-page-missing"
   | "target-page-disconnected"
   | "stale-translation-result"
@@ -125,6 +127,8 @@ const PIPELINE_ERRORS = new Set<string>([
   "invalid-service-mode",
   "invalid-translation-response",
   "translation-service-failed",
+  "translation-provider-unavailable",
+  "translation-invalid-response",
   "target-page-missing",
   "target-page-disconnected",
   "stale-translation-result",
@@ -242,7 +246,9 @@ export function isBackgroundTranslationResponse(
       (value.serviceMode === "local-demo" || value.serviceMode === "development-api") &&
       ((value.serviceMode === "local-demo" && value.resultKind === "local-demo") ||
        (value.serviceMode === "development-api" &&
-        value.resultKind === "ocr-preview"));
+        (value.resultKind === "ocr-preview" ||
+         value.resultKind === "translated-preview" ||
+         value.resultKind === "ocr-fallback")));
   }
   return hasOnlyKeys(value, ["success", "error"]) &&
     isRecord(value.error) &&
