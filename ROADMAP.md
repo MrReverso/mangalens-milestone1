@@ -42,12 +42,13 @@ deployed automatically.
   - [x] Preserve normalized detector quadrilaterals and apply safe
     polygon-aware bubble placement.
   - [x] Improve deterministic reading order and responsive text fitting.
-- [ ] **7B: Expanded page capture**
-  - Choose a reviewed capture model for pages larger than the viewport.
-  - Recommended: user-guided overlapping segments with local-only assembly,
-    no automatic scrolling, and no new Chrome permissions.
-  - Alternatives requiring explicit review: automatic scroll/stitch or broader
-    permissions/source-image fetching.
+- [x] **7B: Expanded page capture**
+  - User-guided overlapping visible segments, strict page/overlap validation,
+    and background-only ephemeral local assembly.
+  - No automatic scrolling, source-image fetching, persistent image storage, or
+    new Chrome permissions; the existing fully visible-page path remains intact.
+  - Segment/session cleanup covers cancellation, expiry, active-tab changes,
+    backend failures, and service-worker memory loss.
 - [ ] Evaluate on a larger separately licensed and human-reviewed corpus.
 
 ## Later milestone — real translation

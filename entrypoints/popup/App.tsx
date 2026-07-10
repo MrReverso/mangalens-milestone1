@@ -15,7 +15,9 @@ import type {
   TranslationCommandResponse,
   TranslationStatusResponse,
   BackgroundCaptureResponse,
+  ExpandedCaptureResponse,
 } from "@/lib/messages";
+import { isExpandedCaptureResponse } from "@/lib/messages";
 import { isBackgroundCaptureResponse } from "@/types/capture";
 import { captureErrorMessage } from "@/lib/capture/capture-status";
 import {
@@ -110,6 +112,11 @@ export default function App() {
   const localTranslationTabId = useRef<number | null>(null);
   const currentServiceModeRef =
     useRef<TranslationServiceMode>("local-demo");
+  const [expandedSession, setExpandedSession] = useState<{
+    sessionId: string;
+    segmentCount: number;
+  } | null>(null);
+  const [isExpandedCaptureBusy, setIsExpandedCaptureBusy] = useState(false);
 
   // ── Load persisted settings on mount ─────────────────────────
   useEffect(() => {
@@ -118,6 +125,7 @@ export default function App() {
       setTargetLanguage(settings.targetLanguage);
       setTranslationsVisible(settings.translationsVisible);
       checkScanStatus(settings.translationsVisible);
+      refreshExpandedCaptureStatus().catch(() => undefined);
     });
   }, []);
 
@@ -167,6 +175,21 @@ export default function App() {
       throw new Error("no-tab");
     }
     return tab;
+  }
+
+  async function refreshExpandedCaptureStatus(): Promise<void> {
+    const tab = await getActiveTab();
+    if (!tab.id || !tab.windowId) return;
+    const raw: unknown = await chrome.runtime.sendMessage({
+      type: "GET_EXPANDED_CAPTURE_STATUS", tabId: tab.id, windowId: tab.windowId,
+    });
+    if (!isExpandedCaptureResponse(raw)) return;
+    if (raw.success) {
+      setExpandedSession({
+        sessionId: raw.status.sessionId,
+        segmentCount: raw.status.segmentCount,
+      });
+    }
   }
 
   // ── Check existing scan status ───────────────────────────────
@@ -445,6 +468,104 @@ export default function App() {
     }
   }
 
+  function expandedErrorMessage(response: ExpandedCaptureResponse): string {
+    return response.success ? "" : captureErrorMessage(
+      response.error.code as import("@/types/capture").CaptureErrorCode
+    );
+  }
+
+  async function handleStartExpandedCapture(): Promise<void> {
+    setIsExpandedCaptureBusy(true);
+    try {
+      const tab = await getActiveTab();
+      if (!tab.id || !tab.windowId) throw new Error("restricted-page");
+      await ensureContentScript(tab);
+      const raw: unknown = await chrome.runtime.sendMessage({
+        type: "START_EXPANDED_CAPTURE", tabId: tab.id, windowId: tab.windowId,
+        sourceLanguage, targetLanguage, serviceMode: "development-api",
+      });
+      if (!isExpandedCaptureResponse(raw)) throw new Error("invalid-response");
+      if (!raw.success) {
+        setStatus({ kind: "error", message: expandedErrorMessage(raw) });
+        return;
+      }
+      setExpandedSession({ sessionId: raw.status.sessionId, segmentCount: 0 });
+      setStatus({ kind: "success", message: "Long-page capture started. Capture this view, then scroll manually." });
+    } catch {
+      setStatus({ kind: "error", message: "Could not start long-page capture" });
+    } finally {
+      setIsExpandedCaptureBusy(false);
+    }
+  }
+
+  async function handleCaptureExpandedSegment(): Promise<void> {
+    if (!expandedSession) return;
+    setIsExpandedCaptureBusy(true);
+    try {
+      const tab = await getActiveTab();
+      if (!tab.id || !tab.windowId) throw new Error("restricted-page");
+      const raw: unknown = await chrome.runtime.sendMessage({
+        type: "CAPTURE_EXPANDED_SEGMENT", tabId: tab.id, windowId: tab.windowId,
+        sessionId: expandedSession.sessionId,
+      });
+      if (!isExpandedCaptureResponse(raw)) throw new Error("invalid-response");
+      if (!raw.success) {
+        setStatus({ kind: "error", message: expandedErrorMessage(raw) });
+        return;
+      }
+      setExpandedSession({ sessionId: raw.status.sessionId, segmentCount: raw.status.segmentCount });
+      setStatus({ kind: "success", message: `Captured ${raw.status.segmentCount} segment${raw.status.segmentCount === 1 ? "" : "s"}. Scroll manually with overlap, then continue.` });
+    } catch {
+      setStatus({ kind: "error", message: "Long-page segment capture failed" });
+    } finally {
+      setIsExpandedCaptureBusy(false);
+    }
+  }
+
+  async function handleFinishExpandedCapture(): Promise<void> {
+    if (!expandedSession) return;
+    setIsExpandedCaptureBusy(true);
+    setStatus({ kind: "scanning", message: "Assembling local capture and processing OCR…" });
+    try {
+      const tab = await getActiveTab();
+      if (!tab.id || !tab.windowId) throw new Error("restricted-page");
+      localTranslationTabId.current = tab.id;
+      currentServiceModeRef.current = "development-api";
+      const raw: unknown = await chrome.runtime.sendMessage({
+        type: "FINISH_EXPANDED_CAPTURE", tabId: tab.id, windowId: tab.windowId,
+        sessionId: expandedSession.sessionId,
+      });
+      if (!isBackgroundTranslationResponse(raw)) throw new Error("invalid-response");
+      if (!raw.success) {
+        setStatus({ kind: "error", message: translationPipelineErrorMessage(raw.error.code) });
+        return;
+      }
+      setExpandedSession(null);
+      setHasTranslations(true);
+      setStatus({ kind: "success", message: `OCR detected ${raw.bubbleCount} text regions · Translation not enabled` });
+    } catch {
+      setStatus({ kind: "error", message: "Long-page OCR failed" });
+    } finally {
+      localTranslationTabId.current = null;
+      setIsExpandedCaptureBusy(false);
+    }
+  }
+
+  async function handleCancelExpandedCapture(): Promise<void> {
+    if (!expandedSession) return;
+    try {
+      const tab = await getActiveTab();
+      if (!tab.id) return;
+      await chrome.runtime.sendMessage({
+        type: "CANCEL_EXPANDED_CAPTURE", tabId: tab.id,
+        sessionId: expandedSession.sessionId,
+      });
+    } finally {
+      setExpandedSession(null);
+      setStatus({ kind: "success", message: "Long-page capture cleared" });
+    }
+  }
+
   // ── Clear Markers ────────────────────────────────────────────
   async function handleClear(): Promise<void> {
     try {
@@ -459,6 +580,7 @@ export default function App() {
       setHasTranslations(false);
       setIsTranslating(false);
       setIsLocalTranslating(false);
+      setExpandedSession(null);
       setStatus(INITIAL_STATUS);
     } catch {
       // Page may have navigated away.
@@ -517,6 +639,33 @@ export default function App() {
           >
             {isTranslating ? "Translating\u2026" : "Preview Translation"}
           </button>
+        )}
+
+        {hasMarkers && !expandedSession && (
+          <button className="btn btn-secondary"
+            disabled={isScanning || isCapturing || isLocalTranslating || isExpandedCaptureBusy}
+            onClick={handleStartExpandedCapture}>
+            Start Long-Page OCR
+          </button>
+        )}
+
+        {hasMarkers && expandedSession && (
+          <>
+            <button className="btn btn-primary"
+              disabled={isExpandedCaptureBusy || isLocalTranslating}
+              onClick={handleCaptureExpandedSegment}>
+              Capture Segment ({expandedSession.segmentCount})
+            </button>
+            <button className="btn btn-primary"
+              disabled={isExpandedCaptureBusy || expandedSession.segmentCount === 0}
+              onClick={handleFinishExpandedCapture}>
+              Finish Long-Page OCR
+            </button>
+            <button className="btn btn-secondary" disabled={isExpandedCaptureBusy}
+              onClick={handleCancelExpandedCapture}>
+              Cancel Long-Page Capture
+            </button>
+          </>
         )}
 
         {hasMarkers && (
