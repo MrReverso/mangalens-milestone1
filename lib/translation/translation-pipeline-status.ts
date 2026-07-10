@@ -27,19 +27,19 @@ export function translationPipelineErrorMessage(
     case "timeout":
       return "Translation timed out";
     case "backend-unavailable":
-      return "Development translation server is not running";
+      return "Local OCR backend is not running";
     case "backend-timeout":
-      return "Development translation timed out";
+      return "Local OCR processing timed out";
     case "backend-invalid-response":
-      return "Development server returned an invalid result";
+      return "Local OCR backend returned an invalid result";
     case "backend-request-failed":
     case "backend-http-error":
     case "backend-invalid-content-type":
     case "backend-response-too-large":
     case "backend-invalid-json":
-      return "Development translation request failed";
+      return "Local OCR request failed";
     case "ocr-provider-disabled":
-      return "Cloud OCR is disabled in the development backend";
+      return "The selected OCR provider is disabled";
     case "ocr-not-configured":
       return "Google Vision OCR is not configured";
     case "ocr-auth-failed":

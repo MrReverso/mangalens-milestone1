@@ -551,7 +551,7 @@ export default function App() {
                 : localStage === "processing"
                   ? "Processing OCR\u2026"
                   : "Applying OCR Preview\u2026"
-              : "OCR via Dev API"}
+              : "Run Local OCR"}
           </button>
         )}
 

@@ -6,7 +6,7 @@ import { translationPipelineErrorMessage } from "@/lib/translation/translation-p
 describe("OCR extension UX and privacy boundary", () => {
   it("maps every OCR error to the required friendly status", () => {
     expect(translationPipelineErrorMessage("ocr-provider-disabled"))
-      .toBe("Cloud OCR is disabled in the development backend");
+      .toBe("The selected OCR provider is disabled");
     expect(translationPipelineErrorMessage("ocr-not-configured"))
       .toBe("Google Vision OCR is not configured");
     expect(translationPipelineErrorMessage("ocr-auth-failed"))
@@ -30,11 +30,22 @@ describe("OCR extension UX and privacy boundary", () => {
       path.resolve(__dirname, "../entrypoints/popup/App.tsx"),
       "utf8"
     );
-    expect(popup).toContain("OCR via Dev API");
+    expect(popup).toContain("Run Local OCR");
     expect(popup).toContain("Processing OCR");
     expect(popup).toContain("Applying OCR Preview");
     expect(popup).toContain("Translation not enabled");
     expect(popup).toContain('rawResponse.resultKind === "ocr-preview"');
+  });
+
+  it("describes loopback transport failures as local OCR failures", () => {
+    expect(translationPipelineErrorMessage("backend-unavailable"))
+      .toBe("Local OCR backend is not running");
+    expect(translationPipelineErrorMessage("backend-timeout"))
+      .toBe("Local OCR processing timed out");
+    expect(translationPipelineErrorMessage("backend-invalid-response"))
+      .toBe("Local OCR backend returned an invalid result");
+    expect(translationPipelineErrorMessage("backend-request-failed"))
+      .toBe("Local OCR request failed");
   });
 
   it("keeps Google requests out of extension code and messages", () => {

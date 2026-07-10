@@ -20,7 +20,8 @@ local-first production architecture.
   It owns page scanning, visible-page capture, editable OCR overlays, and popup
   controls.
 - **Optional loopback development backend:** binds to `127.0.0.1:8787` and
-  exposes the development OCR contract. It is not a production deployment.
+  exposes the development OCR contract. On the Milestone 6 branch it uses the
+  local DBNet + OCR48px provider by default. It is not a production deployment.
 - **Manga Engine:** an isolated Docker service containing the pinned
   manga-image-translator text detectors and OCR implementations.
 - **Paddle Engine:** an isolated Docker service using PaddleOCR 2.8.1 and
@@ -128,14 +129,50 @@ docker compose down
 
 ## Next milestone
 
-The next milestone should integrate the winning local OCR path without adding
-real translation:
+Milestone 7 will improve capture and OCR placement quality, beginning with
+polygon-aware overlays, vertical-text geometry, reading order, and responsive
+text fitting. Expanding capture beyond one fully visible page requires a
+separate careful design because MangaLens must not scroll or alter reader pages
+destructively. Real translation remains a separate, later reviewed milestone.
 
-- expose DBNet + OCR48px through a stable loopback backend contract;
-- connect the Chrome extension capture flow to that contract;
-- preserve the existing editable bubble overlays;
-- keep Google Vision disabled by default as an explicit fallback;
-- add bounded timeouts, cancellation, structured errors, and health checks;
-- keep captured images and OCR text ephemeral and local-first.
+## Milestone 6 local development
 
-Real translation remains a separate, later reviewed milestone.
+Start the winning local Manga Engine in one terminal:
+
+```bash
+pnpm dev:ocr-engine
+```
+
+Start the loopback backend in another:
+
+```bash
+pnpm dev:backend
+```
+
+`GET http://127.0.0.1:8787/health` reports the configured provider and an
+`ocrReady` boolean based on a bounded Manga Engine readiness probe. OCR requests
+use only the exact allowlisted `127.0.0.1:8002` detector and recognizer
+endpoints. Redirects, credentials, arbitrary endpoints, and unvalidated engine
+responses are rejected.
+
+Google Vision remains disabled by default. Setting the exact value
+`MANGALENS_ENABLE_GOOGLE_VISION=true` explicitly selects the remote development
+fallback instead of the local provider.
+
+### Manual Chrome walkthrough
+
+1. Run `pnpm fixture`, then open `http://127.0.0.1:4173/capture-test.html`.
+2. Run `pnpm dev:ocr-engine` and wait for Manga Engine to become healthy.
+3. Run `pnpm dev:backend`; verify its `/health` response has
+   `"ocrProvider":"dbnet-ocr48px"` and `"ocrReady":true`.
+4. Run `pnpm build`, open `chrome://extensions`, enable Developer mode, and
+   load `.output/chrome-mv3` as an unpacked extension.
+5. In the fixture tab, choose **Scan Manga Page**, ensure one complete page is
+   visible, then choose **Run Local OCR**.
+6. Confirm OCR bubbles appear over the page, can be edited, and retain edits
+   after hiding/showing overlays and scrolling the nested reader.
+7. Stop Manga Engine and retry to confirm the popup reports a friendly local
+   OCR failure without exposing raw errors.
+
+The fixture uses only local synthetic SVG pages. Its text and layout are useful
+for transport, positioning, and cleanup checks, not for judging OCR accuracy.
