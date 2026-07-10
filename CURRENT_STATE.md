@@ -9,8 +9,8 @@
 - **Current branch:** `codex/milestone-7b-expanded-capture`, stacked on
   `codex/milestone-7a-polygon-overlays`.
 - **Current PR:** Not yet opened; it will be a draft stacked on PR #11.
-- **Latest stable implementation commit:** `d2a8d97` records the 7B capture
-  decision on top of the 7A geometry work.
+- **Latest stable implementation commit:** `d7022ef` adds the 7B guided
+  capture session, ephemeral assembly, and regression coverage.
 - **Latest CI:** Runs
   [28752811382](https://github.com/MrReverso/mangalens-milestone1/actions/runs/28752811382)
   and
