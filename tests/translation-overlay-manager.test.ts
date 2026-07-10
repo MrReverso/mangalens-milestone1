@@ -1,5 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { TranslationOverlayManager } from "@/lib/translation-overlay-manager";
+import {
+  polygonClipPath,
+  TranslationOverlayManager,
+} from "@/lib/translation-overlay-manager";
 import type { TranslationBubble } from "@/types/translation";
 
 let resizeCallback: ResizeObserverCallback;
@@ -78,6 +81,52 @@ describe("TranslationOverlayManager", () => {
     manager.clear();
   });
 
+  it("uses detector-provided vertical writing geometry", () => {
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 500, 1000)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", image, [{
+      ...bubbles[0],
+      orientation: "vertical",
+    }]);
+
+    const bubble = document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    );
+    expect(bubble?.style.writingMode).toBe("vertical-rl");
+    expect(bubble?.style.textOrientation).toBe("mixed");
+    manager.clear();
+  });
+
+  it("clips a bubble to its normalized detector quadrilateral", () => {
+    const polygonBubble: TranslationBubble = {
+      ...bubbles[0],
+      polygon: [
+        { x: 0.1, y: 0.2 },
+        { x: 0.4, y: 0.21 },
+        { x: 0.38, y: 0.3 },
+        { x: 0.12, y: 0.29 },
+      ],
+    };
+    expect(polygonClipPath(polygonBubble)).toBe(
+      "polygon(0% 0%, 100% 10%, 93.3333% 100%, 6.6667% 90%)"
+    );
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 1000, 1000)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", image, [polygonBubble]);
+    expect(document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    )?.style.clipPath).toBe(polygonClipPath(polygonBubble));
+    manager.clear();
+  });
+
   it("updates bubble positions after nested scrolling", () => {
     const reader = document.createElement("div");
     const image = document.createElement("img");
@@ -113,6 +162,36 @@ describe("TranslationOverlayManager", () => {
     expect(document.querySelector<HTMLElement>(
       ".mangalens-translation-bubble"
     )?.style.width).toBe("150px");
+    manager.clear();
+  });
+
+  it("refits text after a saved edit and image resizing", () => {
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    let width = 1000;
+    vi.spyOn(image, "getBoundingClientRect").mockImplementation(
+      () => new DOMRect(0, 0, width, 500)
+    );
+    const manager = new TranslationOverlayManager();
+    manager.renderPage("page-1", image, bubbles);
+    const element = document.querySelector<HTMLElement>(
+      ".mangalens-translation-bubble"
+    );
+    const initialSize = Number.parseFloat(element?.style.fontSize ?? "0");
+
+    expect(manager.updateBubbleText(
+      "page-1",
+      "bubble-1",
+      "A much longer translated sentence that needs more room"
+    )).toBe(true);
+    const editedSize = Number.parseFloat(element?.style.fontSize ?? "0");
+    expect(editedSize).toBeLessThan(initialSize);
+
+    width = 500;
+    resizeCallback([], {} as ResizeObserver);
+    flushFrame();
+    expect(Number.parseFloat(element?.style.fontSize ?? "0"))
+      .toBeLessThanOrEqual(editedSize);
     manager.clear();
   });
 

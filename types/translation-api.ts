@@ -1,7 +1,10 @@
 import type { SourceLanguage, TargetLanguage } from "@/types/extension";
 import type { CaptureMetadata } from "@/types/capture";
 import type { TranslationBubble } from "@/types/translation";
-import { validateNormalizedRect } from "@/types/translation";
+import {
+  validateNormalizedQuadrilateral,
+  validateNormalizedRect,
+} from "@/types/translation";
 import { normalizeTranslationText } from "@/lib/translation-text";
 import {
   isFiniteNumber,
@@ -57,7 +60,8 @@ export function validateTranslationApiSuccessResponse(
   for (const rawBubble of value.bubbles) {
     if (!isRecord(rawBubble) ||
         !hasOnlyKeys(rawBubble, [
-          "id", "bounds", "originalText", "translatedText",
+          "id", "bounds", "polygon", "orientation", "originalText",
+          "translatedText",
         ]) ||
         !isNonEmptyString(rawBubble.id) ||
       ids.has(rawBubble.id) ||
@@ -67,6 +71,9 @@ export function validateTranslationApiSuccessResponse(
       !isFiniteNumber(rawBubble.bounds.y) ||
       !isFiniteNumber(rawBubble.bounds.width) ||
       !isFiniteNumber(rawBubble.bounds.height) ||
+      (rawBubble.orientation !== undefined &&
+        rawBubble.orientation !== "horizontal" &&
+        rawBubble.orientation !== "vertical") ||
       !isNonEmptyString(rawBubble.originalText) ||
         typeof rawBubble.translatedText !== "string") {
       return null;
@@ -80,10 +87,17 @@ export function validateTranslationApiSuccessResponse(
         width: rawBubble.bounds.width,
         height: rawBubble.bounds.height,
       });
+      const polygon = rawBubble.polygon === undefined
+        ? undefined
+        : validateApiPolygon(rawBubble.polygon, bounds);
       ids.add(rawBubble.id);
       bubbles.push({
         id: rawBubble.id,
         bounds,
+        ...(polygon ? { polygon } : {}),
+        ...(rawBubble.orientation
+          ? { orientation: rawBubble.orientation }
+          : {}),
         originalText: rawBubble.originalText,
         translatedText,
       });
@@ -98,6 +112,25 @@ export function validateTranslationApiSuccessResponse(
     pageId: value.pageId,
     bubbles,
   };
+}
+
+function validateApiPolygon(
+  value: unknown,
+  bounds: TranslationBubble["bounds"]
+): NonNullable<TranslationBubble["polygon"]> {
+  if (!Array.isArray(value) || value.length !== 4) {
+    throw new Error("Invalid bubble polygon");
+  }
+  const points = value.map((point) => {
+    if (!isRecord(point) ||
+        !hasOnlyKeys(point, ["x", "y"]) ||
+        !isFiniteNumber(point.x) ||
+        !isFiniteNumber(point.y)) {
+      throw new Error("Invalid bubble polygon");
+    }
+    return { x: point.x, y: point.y };
+  });
+  return validateNormalizedQuadrilateral(points, bounds);
 }
 
 const SOURCE_LANGUAGES = new Set<string>(["auto", "ja", "ko", "zh"]);

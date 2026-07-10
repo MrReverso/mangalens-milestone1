@@ -1,4 +1,5 @@
 import { normalizedToViewportRect } from "@/lib/image-position";
+import { responsiveBubbleFontSize } from "@/lib/bubble-layout";
 import { normalizeTranslationText } from "@/lib/translation-text";
 import type { TranslationBubble } from "@/types/translation";
 
@@ -95,6 +96,13 @@ export class TranslationOverlayManager {
         whiteSpace: "pre-wrap",
         overflowWrap: "anywhere",
         overflow: "hidden",
+        clipPath: bubble.polygon ? polygonClipPath(bubble) : "none",
+        writingMode: bubble.orientation === "vertical"
+          ? "vertical-rl"
+          : "horizontal-tb",
+        textOrientation: bubble.orientation === "vertical"
+          ? "mixed"
+          : "initial",
         pointerEvents: "auto",
         cursor: "text",
       } as CSSStyleDeclaration);
@@ -179,6 +187,7 @@ export class TranslationOverlayManager {
         : bubble
     );
     page.elements[bubbleIndex].textContent = translatedText;
+    this.positionPage(page);
     return true;
   }
 
@@ -227,6 +236,12 @@ export class TranslationOverlayManager {
         left: `${rect.left}px`,
         width: `${rect.width}px`,
         height: `${rect.height}px`,
+        fontSize: `${responsiveBubbleFontSize(
+          rect.width,
+          rect.height,
+          bubble.translatedText,
+          bubble.orientation
+        )}px`,
       } as CSSStyleDeclaration);
     });
   }
@@ -345,4 +360,17 @@ export class TranslationOverlayManager {
     editor.textarea.remove();
     editor.element.textContent = displayText;
   }
+}
+
+export function polygonClipPath(bubble: TranslationBubble): string {
+  if (!bubble.polygon) return "none";
+  return `polygon(${bubble.polygon.map((point) => {
+    const x = ((point.x - bubble.bounds.x) / bubble.bounds.width) * 100;
+    const y = ((point.y - bubble.bounds.y) / bubble.bounds.height) * 100;
+    return `${clampPercentage(x)}% ${clampPercentage(y)}%`;
+  }).join(", ")})`;
+}
+
+function clampPercentage(value: number): number {
+  return Math.min(100, Math.max(0, Number(value.toFixed(4))));
 }

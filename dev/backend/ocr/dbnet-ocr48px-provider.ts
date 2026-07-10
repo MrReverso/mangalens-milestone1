@@ -1,6 +1,7 @@
 import type { OcrProvider } from "./ocr-provider";
 import type { OcrBounds, OcrInput, OcrRegion, OcrResult } from "./ocr-types";
 import { OcrFailure } from "./ocr-errors";
+import { orderOcrRegions } from "./ocr-reading-order";
 
 export const MANGA_ENGINE_ORIGIN = "http://127.0.0.1:8002";
 export const MANGA_ENGINE_HEALTH_ENDPOINT =
@@ -17,6 +18,7 @@ const MAX_TEXT_CHARACTERS = 20_000;
 interface DetectionRegion {
   readonly id: string;
   readonly points: readonly (readonly [number, number])[];
+  readonly direction: "h" | "v";
 }
 
 export class DbnetOcr48pxProvider implements OcrProvider {
@@ -102,7 +104,7 @@ export class DbnetOcr48pxProvider implements OcrProvider {
     recognitionForm.append("regions", JSON.stringify(regions.map((region) => ({
       id: region.id,
       pts: region.points,
-      direction: "h",
+      direction: region.direction,
     }))));
     recognitionForm.append(
       "image",
@@ -115,12 +117,12 @@ export class DbnetOcr48pxProvider implements OcrProvider {
       signal
     );
     return {
-      regions: validateRecognitionResponse(
+      regions: orderOcrRegions(validateRecognitionResponse(
         recognitionResponse,
         regions,
         input.pixelWidth,
         input.pixelHeight
-      ),
+      ), input.sourceLanguage),
     };
   }
 
@@ -199,6 +201,7 @@ function validateDetectionResponse(
         ids.has(raw.id) ||
         raw.detectorMode !== "genuine" ||
         raw.detectorInferenceRan !== true ||
+        (raw.direction !== "h" && raw.direction !== "v") ||
         !Array.isArray(raw.pts) ||
         raw.pts.length !== 4) {
       throw new OcrFailure("ocr-invalid-response");
@@ -214,7 +217,7 @@ function validateDetectionResponse(
     });
     ids.add(raw.id);
     normalizePoints(points, pixelWidth, pixelHeight);
-    return { id: raw.id, points };
+    return { id: raw.id, points, direction: raw.direction };
   });
 }
 
@@ -260,11 +263,9 @@ function validateRecognitionResponse(
     if (!detection) throw new OcrFailure("ocr-invalid-response");
     regions.push({
       text,
-      bounds: normalizePoints(
-        detection.points,
-        pixelWidth,
-        pixelHeight
-      ),
+      bounds: normalizePoints(detection.points, pixelWidth, pixelHeight),
+      polygon: normalizePolygon(detection.points, pixelWidth, pixelHeight),
+      orientation: detection.direction === "v" ? "vertical" : "horizontal",
     });
   }
   if (regions.length === 0) throw new OcrFailure("ocr-no-text");
@@ -291,6 +292,29 @@ function normalizePoints(
     width: (maxX - minX) / pixelWidth,
     height: (maxY - minY) / pixelHeight,
   };
+}
+
+function normalizePolygon(
+  points: readonly (readonly [number, number])[],
+  pixelWidth: number,
+  pixelHeight: number
+): readonly [
+  { readonly x: number; readonly y: number },
+  { readonly x: number; readonly y: number },
+  { readonly x: number; readonly y: number },
+  { readonly x: number; readonly y: number },
+] {
+  if (points.length !== 4) throw new OcrFailure("ocr-invalid-response");
+  const normalize = ([x, y]: readonly [number, number]) => ({
+    x: x / pixelWidth,
+    y: y / pixelHeight,
+  });
+  return [
+    normalize(points[0]),
+    normalize(points[1]),
+    normalize(points[2]),
+    normalize(points[3]),
+  ];
 }
 
 async function readJsonResponse(

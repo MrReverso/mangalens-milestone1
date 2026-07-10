@@ -33,6 +33,7 @@ function detectionResponse(overrides: Record<string, unknown> = {}): unknown {
     regions: [{
       id: "region_1",
       pts: [[100, 140], [500, 140], [500, 280], [100, 280]],
+      direction: "h",
       detectorMode: "genuine",
       detectorInferenceRan: true,
     }],
@@ -139,6 +140,13 @@ describe("DbnetOcr48pxProvider", () => {
       regions: [{
         text: "こんにちは",
         bounds: { x: 0.1, y: 0.1, width: 0.4, height: 0.1 },
+        polygon: [
+          { x: 0.1, y: 0.1 },
+          { x: 0.5, y: 0.1 },
+          { x: 0.5, y: 0.2 },
+          { x: 0.1, y: 0.2 },
+        ],
+        orientation: "horizontal",
       }],
     });
     const detectForm = vi.mocked(fetchImpl).mock.calls[0][1]?.body as FormData;
@@ -146,6 +154,43 @@ describe("DbnetOcr48pxProvider", () => {
       vi.mocked(fetchImpl).mock.calls[1][1]?.body as FormData;
     expect(detectForm.get("detector")).toBe("default");
     expect(recognizeForm.get("recognizer")).toBe("ocr48px");
+    expect(JSON.parse(String(recognizeForm.get("regions")))[0].direction)
+      .toBe("h");
+  });
+
+  it("preserves vertical detector direction through OCR and bubble geometry", async () => {
+    const detection = detectionResponse({
+      regions: [{
+        id: "region_1",
+        pts: [[100, 140], [220, 140], [220, 700], [100, 700]],
+        direction: "v",
+        detectorMode: "genuine",
+        detectorInferenceRan: true,
+      }],
+    });
+    const fetchImpl: typeof fetch = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(detection))
+      .mockResolvedValueOnce(jsonResponse(recognitionResponse()));
+
+    const result = await new DbnetOcr48pxProvider(fetchImpl).recognize(
+      input,
+      new AbortController().signal
+    );
+
+    const recognitionForm =
+      vi.mocked(fetchImpl).mock.calls[1][1]?.body as FormData;
+    expect(JSON.parse(String(recognitionForm.get("regions")))[0].direction)
+      .toBe("v");
+    expect(result.regions[0]).toMatchObject({
+      orientation: "vertical",
+      bounds: { x: 0.1, y: 0.1, width: 0.12, height: 0.4 },
+      polygon: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.22, y: 0.1 },
+        { x: 0.22, y: 0.5 },
+        { x: 0.1, y: 0.5 },
+      ],
+    });
   });
 
   it("rejects mock detection and never invokes recognition", async () => {
@@ -154,6 +199,7 @@ describe("DbnetOcr48pxProvider", () => {
         regions: [{
           id: "region_1",
           pts: [[1, 1], [2, 1], [2, 2], [1, 2]],
+          direction: "h",
           detectorMode: "mock",
           detectorInferenceRan: false,
         }],
@@ -184,6 +230,7 @@ describe("DbnetOcr48pxProvider", () => {
         detectionResponse({ regions: [{
           id: "region_1",
           pts: [[-1, 1], [2, 1], [2, 2], [1, 2]],
+          direction: "h",
           detectorMode: "genuine",
           detectorInferenceRan: true,
         }] }),

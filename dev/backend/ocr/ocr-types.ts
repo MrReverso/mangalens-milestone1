@@ -16,9 +16,16 @@ export interface OcrBounds {
   readonly height: number;
 }
 
+export interface OcrPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
 export interface OcrRegion {
   readonly text: string;
   readonly bounds: OcrBounds;
+  readonly polygon?: readonly [OcrPoint, OcrPoint, OcrPoint, OcrPoint];
+  readonly orientation?: "horizontal" | "vertical";
 }
 
 export interface OcrResult {

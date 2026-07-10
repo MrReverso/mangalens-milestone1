@@ -15,6 +15,8 @@ export function ocrRegionsToBubbles(
     return {
       id,
       bounds: region.bounds,
+      ...(region.polygon ? { polygon: region.polygon } : {}),
+      ...(region.orientation ? { orientation: region.orientation } : {}),
       originalText: region.text,
       translatedText: region.text,
     };

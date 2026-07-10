@@ -7,9 +7,23 @@ export interface NormalizedRect {
   readonly height: number;
 }
 
+export interface NormalizedPoint {
+  readonly x: number;
+  readonly y: number;
+}
+
+export type NormalizedQuadrilateral = readonly [
+  NormalizedPoint,
+  NormalizedPoint,
+  NormalizedPoint,
+  NormalizedPoint,
+];
+
 export interface TranslationBubble {
   readonly id: string;
   readonly bounds: NormalizedRect;
+  readonly polygon?: NormalizedQuadrilateral;
+  readonly orientation?: "horizontal" | "vertical";
   readonly originalText: string;
   readonly translatedText: string;
 }
@@ -59,4 +73,35 @@ export function validateNormalizedRect(bounds: NormalizedRect): NormalizedRect {
     throw new Error("Bubble coordinates must fit within normalized bounds");
   }
   return bounds;
+}
+
+export function validateNormalizedQuadrilateral(
+  points: readonly NormalizedPoint[],
+  bounds: NormalizedRect
+): NormalizedQuadrilateral {
+  if (points.length !== 4) {
+    throw new Error("Bubble polygon must contain exactly four points");
+  }
+  const normalized = points.map((point) => {
+    if (!Number.isFinite(point.x) || !Number.isFinite(point.y) ||
+        point.x < 0 || point.x > 1 || point.y < 0 || point.y > 1 ||
+        point.x < bounds.x || point.x > bounds.x + bounds.width ||
+        point.y < bounds.y || point.y > bounds.y + bounds.height) {
+      throw new Error("Bubble polygon must fit within normalized bounds");
+    }
+    return { x: point.x, y: point.y };
+  });
+  const area = Math.abs(normalized.reduce((sum, point, index) => {
+    const next = normalized[(index + 1) % normalized.length];
+    return sum + point.x * next.y - next.x * point.y;
+  }, 0)) / 2;
+  if (!Number.isFinite(area) || area <= Number.EPSILON) {
+    throw new Error("Bubble polygon must have positive area");
+  }
+  return [
+    normalized[0],
+    normalized[1],
+    normalized[2],
+    normalized[3],
+  ];
 }
