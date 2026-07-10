@@ -43,8 +43,10 @@ backend → TranslationProvider → validated translated bubbles → content app
   request/page/bubble IDs—never images or capture blobs.
 - The backend returns a versioned response with the same request ID, page ID,
   and a one-for-one allowlisted list of bubble IDs and translated strings.
-- The extension validates every response before applying it. It rejects missing,
-  duplicated, foreign, expired, reordered-if-required, or oversized results.
+- Treat provider output as unknown at the backend boundary, then treat the
+  backend response as unknown again at the extension boundary. Each validator
+  rejects missing, duplicated, foreign, expired, reordered-if-required, empty,
+  or oversized entries before they reach an overlay.
 - `operationSequence`, request expiry, and the current page-session edit merge
   rules stay in force. User edits always win over late provider results.
 
@@ -62,6 +64,13 @@ IDs; never infer or silently fall back to a paid provider. Provider credentials
 are read only from backend process environment/secrets, redacted from errors,
 and never logged, returned, stored, or sent to Chrome.
 
+The popup must never accept keys or arbitrary provider URLs. It may display only
+safe provider identity/execution/readiness metadata returned by loopback health.
+The backend may enable a remote adapter only with an exact environment opt-in,
+an exact reviewed HTTPS endpoint allowlist, disabled redirects, bounded request
+and response sizes, and a documented user-facing remote-execution indication.
+The extension itself never gets remote host permission or a direct network path.
+
 ## Privacy and safety rules
 
 - Extension network targets remain loopback-only; no host permission changes.
@@ -69,7 +78,8 @@ and never logged, returned, stored, or sent to Chrome.
 - Keep input/output size, bubble count, timeout, cancellation, redirects, and
   response content-type limits at the backend boundary.
 - Remote execution must be visibly identified as remote and require an exact
-  opt-in. It is off by default and unavailable without configuration.
+  opt-in in backend configuration. It is off by default and unavailable without
+  configuration; no per-user key entry or implicit fallback exists.
 - Keep current-tab memory-only overlays and edits; clear them using existing
   page/session cleanup.
 
@@ -80,7 +90,8 @@ and never logged, returned, stored, or sent to Chrome.
 `translation-rate-limited`, `translation-timeout`,
 `translation-request-too-large`, `translation-response-too-large`,
 `translation-invalid-response`, `translation-unsupported-language`, and
-`translation-no-output`.
+`translation-no-output`, `translation-remote-not-approved`, and
+`translation-cancelled`.
 
 Map these to friendly popup text. Do not expose URLs, credentials, provider raw
 messages, captured text, or stack traces.
@@ -90,7 +101,10 @@ messages, captured text, or stack traces.
 - Unit-test strict request/response validators, size bounds, IDs, duplicate and
   missing bubbles, language selection, provider opt-in, and error mapping.
 - Contract-test local provider readiness, cancellation, timeout, malformed
-  output, and no-network local mode.
+  output, double validation, and no-network local mode.
+- Contract-test remote opt-in rejection, exact endpoint allowlisting, redirect
+  rejection, credential redaction, and the absence of any extension network
+  request or host-permission change.
 - Integration-test OCR-result-to-translation application, stale-result
   rejection, editable overlay preservation, cancellation, and backend failure.
 - Regression-test fully visible and segmented capture paths unchanged; assert
