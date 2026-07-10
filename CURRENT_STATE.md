@@ -13,6 +13,9 @@
   runs after OCR. It receives only bubble IDs and OCR text, preserves OCR
   geometry, and safely falls back to OCR text when translation output is
   malformed or unavailable. It has no remote provider, credentials, or storage.
+- **Latest implementation commit:** `27c08af`.
+- **Validation:** `pnpm install --frozen-lockfile`, `pnpm compile`, `pnpm test`
+  (354 tests), and `pnpm build` pass locally.
 - **Latest stable implementation commit:** `b67e610` hardens 7B cleanup for
   active-tab changes, tab closure, and failed assembly/backend paths.
 - **Latest CI:** PR #12 is clean and mergeable. Both `verify` and
