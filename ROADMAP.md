@@ -53,8 +53,12 @@ deployed automatically.
 
 ## Later milestone — real translation
 
-- [ ] Define and review a separate real-translation architecture only after the
-  local OCR MVP is stable.
+- [ ] **Milestone 8: local-first real translation**
+  - Design proposal: `docs/milestone-8-real-translation-proposal.md`.
+  - Prerequisite: PRs #9–#12 merged/reviewed and local OCR/expanded-capture
+    manual QA complete.
+  - Local offline translation is the default; any remote/paid provider is a
+    backend-only, explicit opt-in after separate review.
 - [ ] Do not add accounts, billing, deployment, or paid providers without an
   explicit product decision.
 
