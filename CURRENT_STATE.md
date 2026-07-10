@@ -11,9 +11,8 @@
 - **Current PR:** Draft PR #12, stacked on draft PR #11.
 - **Latest stable implementation commit:** `b67e610` hardens 7B cleanup for
   active-tab changes, tab closure, and failed assembly/backend paths.
-- **Latest CI:** PR #12's `verify` job passed for `ce5097c`; the Docker-backed
-  `ocr-benchmark-verify` job is still running. Its Node 20 deprecation note is
-  emitted by GitHub Actions dependencies and does not affect verification.
+- **Latest CI:** PR #12 is clean and mergeable. Both `verify` and
+  `ocr-benchmark-verify` passed on 2026-07-10; there are no review comments.
 - **Active blockers:** PR #9 awaits user merge/review; Docker is unavailable in
   the local environment; DBConvNext has an invalid upstream model mapping.
 - **Superseded work:** Draft PR #8 uses a bundled Tesseract/WASM architecture
@@ -33,6 +32,13 @@
   available browser target cannot load unpacked Chrome extensions, so the
   Chrome popup/overlay walkthrough (including guided assembly and backend
   unavailable UI) remains pending on a machine with Docker and Chrome.
+- **Final 7B audit (2026-07-10):** `pnpm install --frozen-lockfile`,
+  `pnpm compile`, `pnpm test` (349 tests), and `pnpm build` passed. The built
+  manifest retains only `storage`, `activeTab`, and `scripting`, with the
+  existing loopback backend host permission. Static inspection found no source
+  image fetching, automatic scrolling, raw-image/OCR-text logging, or image/OCR
+  persistence. Full manual OCR confirmation remains blocked by missing Docker
+  and an unavailable unpacked-extension Chrome target.
 - **Exact next task:** Commit and push this branch, open a draft PR stacked on
   PR #11, and manually exercise the long-page workflow against the local
   fixture when the local Docker engine is available.
