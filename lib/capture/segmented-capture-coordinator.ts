@@ -171,7 +171,11 @@ export class SegmentedCaptureCoordinator {
       session.segments.push(segment);
       return { success: true, status: statusFor(session) };
     } catch (error: unknown) {
-      return failure(captureErrorCode(error));
+      const code = captureErrorCode(error);
+      if (code === "active-tab-changed" || code === "timeout") {
+        this.dispose(session.id);
+      }
+      return failure(code);
     } finally {
       session.captureActive = false;
       if (captureToken) {
@@ -198,7 +202,9 @@ export class SegmentedCaptureCoordinator {
       this.dispose(session.id);
       return response;
     } catch (error: unknown) {
-      return { success: false, error: { code: captureErrorCode(error) } };
+      const code = captureErrorCode(error);
+      this.dispose(session.id);
+      return { success: false, error: { code } };
     }
   }
 
@@ -208,6 +214,12 @@ export class SegmentedCaptureCoordinator {
     const status = statusFor(session);
     this.dispose(session.id);
     return { success: true, status };
+  }
+
+  /** Releases transient PNGs when Chrome closes the associated tab. */
+  abortTab(tabId: number): void {
+    const sessionId = this.sessionByTab.get(tabId);
+    if (sessionId) this.dispose(sessionId);
   }
 
   private getSession(id: string | undefined): Session | undefined {

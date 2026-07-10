@@ -90,4 +90,7 @@ export default defineBackground(() => {
   chrome.runtime.onMessage.addListener(
     createExpandedCaptureMessageHandler(segmentedCoordinator)
   );
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    segmentedCoordinator?.abortTab(tabId);
+  });
 });

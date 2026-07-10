@@ -112,6 +112,21 @@ describe("SegmentedCaptureCoordinator", () => {
       type: "CAPTURE_EXPANDED_SEGMENT", tabId: 3, windowId: 1, sessionId: "session-3",
     })).resolves.toEqual({ success: false, error: { code: "active-tab-changed" } });
     expect(captureVisibleTab).not.toHaveBeenCalled();
+    expect(coordinator.isActive(3)).toBe(false);
+  });
+
+  it("releases a session when its tab closes", async () => {
+    const coordinator = new SegmentedCaptureCoordinator({
+      isTabActive: vi.fn().mockResolvedValue(true), sendToTab: vi.fn(),
+      captureVisibleTab: vi.fn(), cropper: { crop: vi.fn() },
+      translateCapturedImage: vi.fn(), createSessionId: () => "session-5",
+    });
+    await coordinator.start({
+      type: "START_EXPANDED_CAPTURE", tabId: 5, windowId: 1,
+      sourceLanguage: "auto", targetLanguage: "en", serviceMode: "development-api",
+    });
+    coordinator.abortTab(5);
+    expect(coordinator.isActive(5)).toBe(false);
   });
 
   it("rejects malformed segment metadata before image capture", async () => {
