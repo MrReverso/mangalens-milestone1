@@ -1,9 +1,12 @@
-# MangaLens — Milestone 5 OCR Benchmark
+# MangaLens — Local-first manga OCR and translation
 
-MangaLens is a Chrome Manifest V3 prototype for testing manga, manhwa, webtoon,
-and comic OCR experiences. The extension can detect page images, capture a fully
-visible page or user-guided overlapping visible segments, render OCR text as
-editable overlays, and preserve edits for the current tab session.
+MangaLens is a Chrome Manifest V3 prototype for translating manga, manhwa,
+webtoon, and comic pages. The extension can detect page images, capture a fully
+visible page or user-guided overlapping visible segments, run local OCR, render
+translated text as editable overlays, and preserve edits for the current tab
+session. The loopback backend supports a deterministic post-OCR preview by
+default and an explicitly selected real local TranslateGemma model through
+Ollama. No API key is needed for the local model.
 
 Milestone 5 adds isolated Docker services and a reproducible multilingual
 benchmark for local text detection and OCR. It does not add real translation or
@@ -19,9 +22,12 @@ local-first production architecture.
 - **Chrome extension:** WXT, React, and strict TypeScript on Chrome Manifest V3.
   It owns page scanning, visible-page capture, editable OCR overlays, and popup
   controls.
-- **Optional loopback development backend:** binds to `127.0.0.1:8787` and
-  exposes the development OCR contract. On the Milestone 6 branch it uses the
-  local DBNet + OCR48px provider by default. It is not a production deployment.
+- **Optional loopback development backend:** binds to `127.0.0.1:8787`, uses
+  local DBNet + OCR48px by default, and owns the post-OCR translation provider.
+  The extension never talks directly to OCR or translation engines.
+- **Local translation engine:** an explicit Ollama opt-in at
+  `127.0.0.1:11434` uses an allowlisted TranslateGemma model. Only bounded OCR
+  text and opaque bubble IDs reach it; page images never do.
 - **Manga Engine:** an isolated Docker service containing the pinned
   manga-image-translator text detectors and OCR implementations.
 - **Paddle Engine:** an isolated Docker service using PaddleOCR 2.8.1 and
@@ -127,14 +133,31 @@ docker compose down
 - OCR edits persist only for the current tab session.
 - Google Vision is a development-only comparison and remains disabled by
   default.
-- Real translation, production deployment, accounts, billing, durable
-  persistence, analytics, downloads, and image inpainting are not implemented.
+- The real local translation adapter is functional but still needs broader
+  multilingual quality evaluation before it can be called production-quality.
+  Production deployment, accounts, billing, durable persistence, analytics,
+  downloads, and image inpainting are not implemented.
 
-## Next milestone
+## Milestone 8 local translation
 
-Milestone 7 includes polygon-aware overlays, vertical-text geometry, reading
-order, responsive text fitting, and user-guided expanded capture. Real
-translation remains a separate, later reviewed milestone.
+The default backend remains the deterministic no-network preview so local OCR
+setup keeps working without another large model. To enable real translation:
+
+```bash
+ollama pull translategemma:4b
+MANGALENS_TRANSLATION_PROVIDER=ollama pnpm dev:backend
+```
+
+The allowlisted `translategemma:12b` and `translategemma:27b` variants may be
+selected with `MANGALENS_OLLAMA_MODEL` after pulling them. The 4B model is the
+smallest supported default. `GET http://127.0.0.1:8787/health` reports the
+translation provider and `translationReady`; a missing or stopped model never
+removes usable OCR results.
+
+Ollama requests use only exact loopback endpoints, disable redirects and
+credentials, enforce time and response-size bounds, and treat both the Ollama
+envelope and generated translation JSON as untrusted. OCR text, translations,
+and page images are never logged or persisted.
 
 ## Milestone 6 local development
 
@@ -173,12 +196,14 @@ fallback instead of the local provider.
 
 1. Run `pnpm fixture`, then open `http://127.0.0.1:4173/capture-test.html`.
 2. Run `pnpm dev:ocr-engine` and wait for Manga Engine to become healthy.
-3. Run `pnpm dev:backend`; verify its `/health` response has
-   `"ocrProvider":"dbnet-ocr48px"` and `"ocrReady":true`.
+3. Optionally pull TranslateGemma as shown above, then run `pnpm dev:backend`
+   with `MANGALENS_TRANSLATION_PROVIDER=ollama`. Verify `/health` has
+   `"ocrProvider":"dbnet-ocr48px"`, `"ocrReady":true`, and
+   `"translationReady":true`.
 4. Run `pnpm build`, open `chrome://extensions`, enable Developer mode, and
    load `.output/chrome-mv3` as an unpacked extension.
 5. In the fixture tab, choose **Scan Manga Page**, ensure one complete page is
-   visible, then choose **Run Local OCR**.
+   visible, then choose **Run Local OCR + Translate**.
 6. Confirm OCR bubbles appear over the page, can be edited, and retain edits
    after hiding/showing overlays and scrolling the nested reader.
 7. Stop Manga Engine and retry to confirm the popup reports a friendly local

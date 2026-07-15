@@ -9,6 +9,12 @@ import type { OcrProvider } from "./ocr/ocr-provider";
 import { OcrFailure, ocrErrorCode, ocrErrorStatus } from "./ocr/ocr-errors";
 import { ocrRegionsToBubbles } from "./ocr/ocr-to-bubbles";
 import type { TranslationBubble } from "../../types/translation";
+import {
+  DeterministicLocalTranslationProvider,
+  applyValidatedTranslation,
+  type TranslationProvider,
+  type TranslationProviderStatus,
+} from "./translation/translation-provider";
 
 export interface BackendLogEntry {
   readonly timestamp: string;
@@ -21,6 +27,7 @@ export interface BackendLogEntry {
 
 export interface TranslationHandlerDependencies {
   readonly ocrProvider: OcrProvider;
+  readonly translationProvider?: TranslationProvider;
   readonly logger?: (entry: BackendLogEntry) => void;
   readonly now?: () => number;
 }
@@ -43,13 +50,18 @@ export function createTranslationRequestHandler(
 ): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
   const now = dependencies.now ?? Date.now;
   const logger = dependencies.logger ?? defaultLogger;
-  return (req, res) => handleRequest(req, res, dependencies.ocrProvider, now, logger);
+  return (req, res) => handleRequest(
+    req, res, dependencies.ocrProvider,
+    dependencies.translationProvider ?? new DeterministicLocalTranslationProvider(),
+    now, logger
+  );
 }
 
 async function handleRequest(
   req: IncomingMessage,
   res: ServerResponse,
   ocrProvider: OcrProvider,
+  translationProvider: TranslationProvider,
   now: () => number,
   logger: (entry: BackendLogEntry) => void
 ): Promise<void> {
@@ -81,12 +93,19 @@ async function handleRequest(
     req.once("aborted", onHealthAborted);
     const healthTimer = setTimeout(() => healthController.abort(), 1_500);
     let ocrReady = ocrProvider.enabled;
+    let translationReady = translationProvider.enabled;
     try {
-      if (ocrProvider.health) {
-        ocrReady = await ocrProvider.health(healthController.signal);
-      }
+      [ocrReady, translationReady] = await Promise.all([
+        ocrProvider.health
+          ? ocrProvider.health(healthController.signal)
+          : Promise.resolve(ocrProvider.enabled),
+        translationProvider.health
+          ? translationProvider.health(healthController.signal)
+          : Promise.resolve(translationProvider.enabled),
+      ]);
     } catch {
       ocrReady = false;
+      translationReady = false;
     } finally {
       clearTimeout(healthTimer);
       req.off("aborted", onHealthAborted);
@@ -105,6 +124,10 @@ async function handleRequest(
         ocrExecution: ocrProvider.execution,
         ocrEnabled: ocrProvider.enabled,
         ocrReady,
+        translationProvider: translationProvider.id,
+        translationExecution: translationProvider.execution,
+        translationEnabled: translationProvider.enabled,
+        translationReady,
       })
     );
     logRequest(200);
@@ -330,8 +353,9 @@ async function handleRequest(
     };
     req.once("aborted", onRequestAborted);
     if (typeof res.once === "function") res.once("close", onResponseClosed);
-    const operationTimer = setTimeout(() => operationController.abort(), 14_500);
+    const operationTimer = setTimeout(() => operationController.abort(), 115_000);
     let bubbles: TranslationBubble[];
+    let translationStatus: TranslationProviderStatus = "unavailable";
     try {
       const result = await ocrProvider.recognize({
         image: imagePart.data,
@@ -360,6 +384,24 @@ async function handleRequest(
         throw new OcrFailure("ocr-invalid-response");
       }
       bubbles = validatedResponse.bubbles;
+      try {
+        const translated = await translationProvider.translate(
+          bubbles.map((bubble) => ({ id: bubble.id, originalText: bubble.originalText })),
+          validatedMetadata.sourceLanguage,
+          validatedMetadata.targetLanguage,
+          operationController.signal
+        );
+        if (operationController.signal.aborted) throw new OcrFailure("ocr-timeout");
+        const validatedTranslation = applyValidatedTranslation(bubbles, translated);
+        if (!validatedTranslation) throw new Error("translation-invalid-response");
+        bubbles = validatedTranslation;
+        translationStatus = "translated";
+      } catch (error: unknown) {
+        if (operationController.signal.aborted) throw new OcrFailure("ocr-timeout");
+        // Translation is a post-OCR enhancement: return the validated OCR text
+        // rather than losing usable geometry/text when this local provider fails.
+        translationStatus = "unavailable";
+      }
     } catch (error: unknown) {
       const code = operationController.signal.aborted
         ? "ocr-timeout"
@@ -385,6 +427,11 @@ async function handleRequest(
         requestId: validatedMetadata.requestId,
         pageId: validatedMetadata.pageId,
         bubbles,
+        translation: {
+          providerId: translationProvider.id,
+          execution: translationProvider.execution,
+          status: translationStatus,
+        },
       })
     );
 

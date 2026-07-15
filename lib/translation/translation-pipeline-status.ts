@@ -18,6 +18,10 @@ export function translationPipelineErrorMessage(
       return "Choose a valid translation service mode";
     case "translation-service-failed":
       return "Local translation processing failed";
+    case "translation-provider-unavailable":
+      return "Local translation preview is unavailable; showing OCR text";
+    case "translation-invalid-response":
+      return "Local translation preview returned an invalid result";
     case "target-page-missing":
       return "The manga page is no longer available";
     case "target-page-disconnected":

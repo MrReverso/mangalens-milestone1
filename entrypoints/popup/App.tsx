@@ -138,8 +138,8 @@ export default function App() {
       const progressText: Record<TranslationPipelineStage, string> = isOcr
         ? {
             capturing: "Capturing Page\u2026",
-            processing: "Processing OCR\u2026",
-            applying: "Applying OCR Preview\u2026",
+            processing: "Running Local OCR + Translation\u2026",
+            applying: "Applying Text Overlays\u2026",
           }
         : {
             capturing: "Capturing Page\u2026",
@@ -444,7 +444,22 @@ export default function App() {
         return;
       }
       setHasTranslations(true);
-      if (rawResponse.resultKind === "ocr-preview") {
+      if (rawResponse.resultKind === "translated-preview") {
+        setStatus({
+          kind: "success",
+          message: `Local translation preview applied to ${rawResponse.bubbleCount} text regions`,
+        });
+      } else if (rawResponse.resultKind === "translated-local") {
+        setStatus({
+          kind: "success",
+          message: `Local translation applied to ${rawResponse.bubbleCount} text regions`,
+        });
+      } else if (rawResponse.resultKind === "ocr-fallback") {
+        setStatus({
+          kind: "success",
+          message: `OCR detected ${rawResponse.bubbleCount} text regions · Translation unavailable`,
+        });
+      } else if (rawResponse.resultKind === "ocr-preview") {
         setStatus({
           kind: "success",
           message: `OCR detected ${rawResponse.bubbleCount} text regions ` +
@@ -698,9 +713,9 @@ export default function App() {
               ? localStage === "capturing"
                 ? "Capturing\u2026"
                 : localStage === "processing"
-                  ? "Processing OCR\u2026"
-                  : "Applying OCR Preview\u2026"
-              : "Run Local OCR"}
+                  ? "Running OCR + Translation\u2026"
+                  : "Applying Overlays\u2026"
+              : "Run Local OCR + Translate"}
           </button>
         )}
 

@@ -41,13 +41,15 @@ const BACKEND_ERRORS = new Set<string>([
   "ocr-response-too-large",
   "ocr-invalid-response",
   "ocr-no-text",
+  "translation-provider-unavailable",
+  "translation-invalid-response",
 ]);
 
 function isBackendErrorCode(code: string): boolean {
   return BACKEND_ERRORS.has(code);
 }
 
-const DEFAULT_TIMEOUT_MS = 15_000;
+const DEFAULT_TIMEOUT_MS = 120_000;
 const DEFAULT_RETIREMENT_TIMEOUT_MS = 5_000;
 
 interface TranslationOperation {
@@ -361,7 +363,15 @@ export class TranslationCoordinator {
     return {
       success: true, pageId: response.pageId, pageNumber: metadata.pageNumber,
       bubbleCount: response.bubbles.length,
-      resultKind: request.serviceMode === "local-demo" ? "local-demo" : "ocr-preview",
+      resultKind: request.serviceMode === "local-demo"
+        ? "local-demo"
+        : response.translation?.status === "translated"
+          ? response.translation.providerId === "deterministic-local-preview"
+            ? "translated-preview"
+            : "translated-local"
+          : response.translation?.status === "unavailable"
+            ? "ocr-fallback"
+            : "ocr-preview",
       serviceMode: request.serviceMode,
     };
   }

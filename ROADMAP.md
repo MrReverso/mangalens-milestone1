@@ -51,10 +51,20 @@ deployed automatically.
     backend failures, and service-worker memory loss.
 - [ ] Evaluate on a larger separately licensed and human-reviewed corpus.
 
-## Later milestone — real translation
+## Milestone 8 — local-first translation foundation
 
-- [ ] Define and review a separate real-translation architecture only after the
-  local OCR MVP is stable.
+- [x] Add a backend-owned translation provider after OCR.
+  - The deterministic local preview has no network or credentials and validates
+    the post-OCR pipeline.
+- [x] Add an explicit real local provider using an exact loopback-only Ollama
+  contract and allowlisted TranslateGemma models.
+  - Preserve OCR geometry and fall back to OCR text on missing, timed-out, or
+    malformed local-model output.
+  - Keep provider/model identity and readiness explicit without extension-side
+    credentials or new permissions.
+- [ ] Complete manual Chrome QA and a broader licensed multilingual quality
+  evaluation before calling the local model production-ready.
+- [ ] Remote/paid providers remain separate explicit opt-ins after review.
 - [ ] Do not add accounts, billing, deployment, or paid providers without an
   explicit product decision.
 
@@ -64,4 +74,5 @@ deployed automatically.
   valid reviewed model URL.
 - The current three-page synthetic benchmark is too small for a final
   production-quality model decision.
-- Milestone 5 PR #9 is ready and green but remains unmerged pending user review.
+- Manual end-to-end OCR and real local translation QA still requires Docker,
+  Ollama, and an unpacked-extension-capable Chrome session.

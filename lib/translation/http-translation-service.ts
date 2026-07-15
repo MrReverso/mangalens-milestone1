@@ -162,6 +162,8 @@ const BACKEND_OCR_ERRORS = new Set<string>([
   "ocr-response-too-large",
   "ocr-invalid-response",
   "ocr-no-text",
+  "translation-provider-unavailable",
+  "translation-invalid-response",
 ]);
 
 export function parseBackendOcrError(bytes: Uint8Array): string | null {

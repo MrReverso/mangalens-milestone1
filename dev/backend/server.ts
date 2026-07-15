@@ -6,6 +6,7 @@ import {
 } from "./ocr/google-access-token-provider";
 import { GoogleVisionOcrProvider } from "./ocr/google-vision-ocr-provider";
 import { DbnetOcr48pxProvider } from "./ocr/dbnet-ocr48px-provider";
+import { createConfiguredTranslationProvider } from "./translation/translation-provider-config";
 import {
   OptionalOcrProvider,
   isGoogleVisionExplicitlyEnabled,
@@ -24,6 +25,7 @@ const handleTranslationRequest = createTranslationRequestHandler({
       true
     )
     : new DbnetOcr48pxProvider(),
+  translationProvider: createConfiguredTranslationProvider(process.env),
 });
 
 const server = createServer((req, res) => {

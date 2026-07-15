@@ -29,6 +29,11 @@ export interface TranslationApiSuccessResponse {
   readonly requestId: string;
   readonly pageId: string;
   readonly bubbles: TranslationBubble[];
+  readonly translation?: {
+    readonly providerId: string;
+    readonly execution: "local" | "remote";
+    readonly status: "translated" | "unavailable";
+  };
 }
 
 export interface TranslationApiErrorResponse {
@@ -48,7 +53,7 @@ export function validateTranslationApiSuccessResponse(
   value: unknown
 ): TranslationApiSuccessResponse | null {
   if (!isRecord(value) || value.contractVersion !== 1 ||
-      !hasOnlyKeys(value, ["contractVersion", "requestId", "pageId", "bubbles"]) ||
+      !hasOnlyKeys(value, ["contractVersion", "requestId", "pageId", "bubbles", "translation"]) ||
       !isNonEmptyString(value.requestId) ||
       !isNonEmptyString(value.pageId) ||
       !Array.isArray(value.bubbles)) {
@@ -106,12 +111,23 @@ export function validateTranslationApiSuccessResponse(
     }
   }
 
+  const translation = value.translation === undefined ? undefined : validateTranslationStatus(value.translation);
+  if (value.translation !== undefined && !translation) return null;
   return {
     contractVersion: 1,
     requestId: value.requestId,
     pageId: value.pageId,
     bubbles,
+    ...(translation ? { translation } : {}),
   };
+}
+
+function validateTranslationStatus(value: unknown): TranslationApiSuccessResponse["translation"] | null {
+  if (!isRecord(value) || !hasOnlyKeys(value, ["providerId", "execution", "status"]) ||
+      !isNonEmptyString(value.providerId) ||
+      (value.execution !== "local" && value.execution !== "remote") ||
+      (value.status !== "translated" && value.status !== "unavailable")) return null;
+  return { providerId: value.providerId, execution: value.execution, status: value.status };
 }
 
 function validateApiPolygon(

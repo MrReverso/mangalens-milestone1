@@ -30,10 +30,12 @@ describe("OCR extension UX and privacy boundary", () => {
       path.resolve(__dirname, "../entrypoints/popup/App.tsx"),
       "utf8"
     );
-    expect(popup).toContain("Run Local OCR");
-    expect(popup).toContain("Processing OCR");
-    expect(popup).toContain("Applying OCR Preview");
+    expect(popup).toContain("Run Local OCR + Translate");
+    expect(popup).toContain("Running Local OCR + Translation");
+    expect(popup).toContain("Applying Text Overlays");
     expect(popup).toContain("Translation not enabled");
+    expect(popup).toContain("Local translation preview applied");
+    expect(popup).toContain("Local translation applied");
     expect(popup).toContain('rawResponse.resultKind === "ocr-preview"');
   });
 

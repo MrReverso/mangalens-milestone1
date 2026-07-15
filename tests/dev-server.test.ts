@@ -194,6 +194,10 @@ describe("Development Server Handlers", () => {
       ocrExecution: "local",
       ocrEnabled: true,
       ocrReady: true,
+      translationProvider: "deterministic-local-preview",
+      translationExecution: "local",
+      translationEnabled: true,
+      translationReady: true,
     });
   });
 
@@ -219,6 +223,10 @@ describe("Development Server Handlers", () => {
         ocrExecution: "remote",
         ocrEnabled: enabled,
         ocrReady: enabled,
+        translationProvider: "deterministic-local-preview",
+        translationExecution: "local",
+        translationEnabled: true,
+        translationReady: true,
       });
     }
   );
@@ -292,7 +300,7 @@ describe("Development Server Handlers", () => {
         ],
         orientation: "horizontal",
         originalText: "読めます",
-        translatedText: "読めます",
+        translatedText: "[translated preview] 読めます",
       }],
     });
     expect(payload.bubbles[0].id).toBe("req-1-ocr-1");
@@ -338,7 +346,7 @@ describe("Development Server Handlers", () => {
     expect(response.pageId).toBe("page-1");
     expect(response.bubbles).toHaveLength(3);
 
-    expect(response.bubbles[0].translatedText).toBe("Detected paragraph one");
+    expect(response.bubbles[0].translatedText).toBe("[translated preview] Detected paragraph one");
     expect(response.bubbles[0].originalText).toBe("Detected paragraph one");
   });
 
@@ -437,7 +445,7 @@ describe("Development Server Handlers", () => {
       const out = getOutput();
       expect(out.status).toBe(200);
       const response = JSON.parse(out.body);
-      expect(response.bubbles[0].translatedText).toBe("Detected paragraph one");
+      expect(response.bubbles[0].translatedText).toBe("[translated preview] Detected paragraph one");
     }
   });
 
@@ -764,7 +772,7 @@ describe("Development Server Handlers", () => {
     expect(seenSignal).toBeInstanceOf(AbortSignal);
   });
 
-  it("returns OCR regions as untranslated, editable-contract bubbles", async () => {
+  it("runs OCR text through the deterministic local provider without changing geometry", async () => {
     const handler = createTranslationRequestHandler({
       ocrProvider: {
         ...fakeProviderMetadata,
@@ -784,8 +792,41 @@ describe("Development Server Handlers", () => {
       id: "req-1-ocr-1",
       bounds: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
       originalText: "そのまま",
-      translatedText: "そのまま",
+      translatedText: "[translated preview] そのまま",
     }]);
+    expect(response.translation).toEqual({
+      providerId: "deterministic-local-preview",
+      execution: "local",
+      status: "translated",
+    });
+  });
+
+  it("falls back to validated OCR text when a translation provider returns malformed output", async () => {
+    const handler = createTranslationRequestHandler({
+      ocrProvider: {
+        ...fakeProviderMetadata,
+        recognize: vi.fn(async () => ({ regions: [{
+          text: "fallback source",
+          bounds: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
+        }] })),
+      },
+      translationProvider: {
+        id: "malformed-test", execution: "local", enabled: true,
+        translate: vi.fn(async () => ({ entries: [{ id: "wrong", translatedText: "bad" }] })),
+      },
+      logger: () => undefined,
+    });
+    const { res, getOutput } = createMockResponse();
+    await handler(createValidPostRequest(), res);
+    const response = JSON.parse(getOutput().body);
+    expect(response.bubbles[0]).toMatchObject({
+      originalText: "fallback source",
+      translatedText: "fallback source",
+      bounds: { x: 0.1, y: 0.2, width: 0.3, height: 0.2 },
+    });
+    expect(response.translation).toEqual({
+      providerId: "malformed-test", execution: "local", status: "unavailable",
+    });
   });
 
   it.each<readonly [OcrErrorCode, number]>([
