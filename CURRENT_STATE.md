@@ -10,8 +10,7 @@
   capture with background-only ephemeral image assembly.
 - **Milestone 8 foundation:** The backend-owned deterministic preview runs after
   OCR, receives only bubble IDs and OCR text, preserves geometry, and safely
-  falls back to OCR text on invalid output. PR #14 CI was green at commit
-  `2b49eb5` (`verify` and `ocr-benchmark-verify`).
+  falls back to OCR text on invalid output.
 - **Real local translation:** An explicit
   `MANGALENS_TRANSLATION_PROVIDER=ollama` mode uses only
   `127.0.0.1:11434`, accepts the allowlisted TranslateGemma 4B/12B/27B models,
@@ -26,6 +25,11 @@
   provider ready by default and the Ollama provider safely not ready when its
   local process/model is absent. The built manifest still has only `storage`,
   `activeTab`, and `scripting` plus the existing `127.0.0.1:8787` host access.
+- **Latest implementation commit:** `60e6920` adds the real local
+  TranslateGemma provider, explicit configuration, readiness, safe fallback,
+  UI status, tests, and setup documentation.
+- **Latest CI:** Both push and pull-request `verify` jobs and both genuine
+  Docker `ocr-benchmark-verify` jobs passed for `60e6920` on 2026-07-15.
 - **Manual QA status:** Docker and Ollama executables are unavailable in this
   environment, and the available browser target cannot load an unpacked Chrome
   extension. Full DBNet → TranslateGemma → overlay QA remains pending on a
@@ -33,6 +37,6 @@
 - **Known research limits:** DBConvNext still has an invalid upstream model
   mapping, and both OCR and translation need a larger separately licensed,
   human-reviewed multilingual corpus before production-quality claims.
-- **Exact next task:** Commit and push the real local translation checkpoint to
-  PR #14, verify CI, then complete manual Chrome QA with `translategemma:4b`
-  installed.
+- **Exact next task:** Complete manual Chrome QA with Docker, Ollama,
+  `translategemma:4b`, and the unpacked extension; fix only confirmed issues,
+  then move PR #14 from draft to human review.
