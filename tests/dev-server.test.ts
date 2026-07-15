@@ -197,6 +197,7 @@ describe("Development Server Handlers", () => {
       translationProvider: "deterministic-local-preview",
       translationExecution: "local",
       translationEnabled: true,
+      translationReady: true,
     });
   });
 
@@ -225,6 +226,7 @@ describe("Development Server Handlers", () => {
         translationProvider: "deterministic-local-preview",
         translationExecution: "local",
         translationEnabled: true,
+        translationReady: true,
       });
     }
   );

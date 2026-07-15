@@ -12,6 +12,7 @@ export interface TranslationProvider {
   readonly id: string;
   readonly execution: TranslationProviderExecution;
   readonly enabled: boolean;
+  health?(signal: AbortSignal): Promise<boolean>;
   translate(
     entries: readonly TranslationTextEntry[],
     sourceLanguage: string,
@@ -29,6 +30,11 @@ export class DeterministicLocalTranslationProvider implements TranslationProvide
   readonly id = "deterministic-local-preview";
   readonly execution = "local" as const;
   readonly enabled = true;
+
+  async health(signal: AbortSignal): Promise<boolean> {
+    if (signal.aborted) throw new DOMException("Translation cancelled", "AbortError");
+    return true;
+  }
 
   async translate(
     entries: readonly TranslationTextEntry[],

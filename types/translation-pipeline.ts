@@ -9,7 +9,12 @@ import type { TranslationBubble } from "@/types/translation";
 import { validateTranslationApiSuccessResponse } from "@/types/translation-api";
 
 export type TranslationServiceMode = "local-demo" | "development-api";
-export type TranslationResultKind = "local-demo" | "ocr-preview" | "translated-preview" | "ocr-fallback";
+export type TranslationResultKind =
+  | "local-demo"
+  | "ocr-preview"
+  | "translated-preview"
+  | "translated-local"
+  | "ocr-fallback";
 
 export type TranslationPipelineStage = "capturing" | "processing" | "applying";
 
@@ -248,6 +253,7 @@ export function isBackgroundTranslationResponse(
        (value.serviceMode === "development-api" &&
         (value.resultKind === "ocr-preview" ||
          value.resultKind === "translated-preview" ||
+         value.resultKind === "translated-local" ||
          value.resultKind === "ocr-fallback")));
   }
   return hasOnlyKeys(value, ["success", "error"]) &&

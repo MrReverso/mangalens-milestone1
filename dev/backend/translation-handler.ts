@@ -93,12 +93,19 @@ async function handleRequest(
     req.once("aborted", onHealthAborted);
     const healthTimer = setTimeout(() => healthController.abort(), 1_500);
     let ocrReady = ocrProvider.enabled;
+    let translationReady = translationProvider.enabled;
     try {
-      if (ocrProvider.health) {
-        ocrReady = await ocrProvider.health(healthController.signal);
-      }
+      [ocrReady, translationReady] = await Promise.all([
+        ocrProvider.health
+          ? ocrProvider.health(healthController.signal)
+          : Promise.resolve(ocrProvider.enabled),
+        translationProvider.health
+          ? translationProvider.health(healthController.signal)
+          : Promise.resolve(translationProvider.enabled),
+      ]);
     } catch {
       ocrReady = false;
+      translationReady = false;
     } finally {
       clearTimeout(healthTimer);
       req.off("aborted", onHealthAborted);
@@ -120,6 +127,7 @@ async function handleRequest(
         translationProvider: translationProvider.id,
         translationExecution: translationProvider.execution,
         translationEnabled: translationProvider.enabled,
+        translationReady,
       })
     );
     logRequest(200);
@@ -345,7 +353,7 @@ async function handleRequest(
     };
     req.once("aborted", onRequestAborted);
     if (typeof res.once === "function") res.once("close", onResponseClosed);
-    const operationTimer = setTimeout(() => operationController.abort(), 14_500);
+    const operationTimer = setTimeout(() => operationController.abort(), 115_000);
     let bubbles: TranslationBubble[];
     let translationStatus: TranslationProviderStatus = "unavailable";
     try {
