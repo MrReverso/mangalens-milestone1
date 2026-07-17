@@ -76,3 +76,19 @@ deployed automatically.
   production-quality model decision.
 - Manual end-to-end OCR and real local translation QA still requires Docker,
   Ollama, and an unpacked-extension-capable Chrome session.
+
+## Milestone 9 — chapter reader redesign
+
+- [x] Add an explicit per-tab chapter reader session with validated start,
+  status, and stop commands.
+- [x] Replace the development-heavy default popup with chapter discovery,
+  target language, visibility, and session controls.
+- [x] Preserve DBNet/OCR48px, Ollama/TranslateGemma, expanded capture, and
+  diagnostics behind an Advanced section.
+- [x] Keep local AI inactive by default and require an explicit persisted
+  device opt-in.
+- [ ] Add viewport-priority orchestration for real translation across the
+  chapter while keeping bounded concurrency and cancellation.
+- [ ] Improve bubble masking/typography before evaluating local inpainting.
+- [ ] A standard remote engine remains a separate explicit provider, privacy,
+  permission, retention, and security decision.

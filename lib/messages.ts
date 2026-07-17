@@ -33,6 +33,18 @@ export interface ScanPageMessage {
   readonly type: "SCAN_PAGE";
 }
 
+export interface StartReaderSessionMessage {
+  readonly type: "START_READER_SESSION";
+}
+
+export interface GetReaderSessionStatusMessage {
+  readonly type: "GET_READER_SESSION_STATUS";
+}
+
+export interface StopReaderSessionMessage {
+  readonly type: "STOP_READER_SESSION";
+}
+
 export interface ClearMarkersMessage {
   readonly type: "CLEAR_MARKERS";
 }
@@ -150,6 +162,20 @@ export interface TranslationStatusResponse {
   readonly translationsVisible: boolean;
 }
 
+export interface ReaderSessionStatusResponse {
+  readonly type: "READER_SESSION_STATUS";
+  readonly active: boolean;
+  readonly title: string;
+  readonly url: string;
+  readonly totalPages: number;
+  readonly translatedPages: number;
+  readonly failedPages: number;
+}
+
+export type ReaderSessionCommandResponse =
+  | { readonly success: true; readonly status: ReaderSessionStatusResponse }
+  | ScanErrorResponse;
+
 export type TranslationCommandResponse =
   | { readonly success: true; readonly status: TranslationStatusResponse }
   | ScanErrorResponse;
@@ -158,6 +184,9 @@ export type TranslationCommandResponse =
 
 export type PopupToContentMessage =
   | ScanPageMessage
+  | StartReaderSessionMessage
+  | GetReaderSessionStatusMessage
+  | StopReaderSessionMessage
   | ClearMarkersMessage
   | GetScanStatusMessage
   | StartMockTranslationMessage
@@ -201,6 +230,9 @@ export type {
 
 const CONTENT_MESSAGE_TYPES = new Set<string>([
   "SCAN_PAGE",
+  "START_READER_SESSION",
+  "GET_READER_SESSION_STATUS",
+  "STOP_READER_SESSION",
   "CLEAR_MARKERS",
   "GET_SCAN_STATUS",
   "START_MOCK_TRANSLATION",
@@ -313,6 +345,34 @@ export function isExpandedCaptureResponse(
   return Object.keys(value).length === 2 && "error" in value &&
     typeof value.error === "object" && value.error !== null &&
     "code" in value.error && typeof value.error.code === "string";
+}
+
+export function isReaderSessionStatusResponse(
+  value: unknown
+): value is ReaderSessionStatusResponse {
+  return isRecordWithKeys(value, [
+    "type", "active", "title", "url", "totalPages", "translatedPages",
+    "failedPages",
+  ]) && value.type === "READER_SESSION_STATUS" &&
+    typeof value.active === "boolean" &&
+    typeof value.title === "string" && typeof value.url === "string" &&
+    Number.isSafeInteger(value.totalPages) && (value.totalPages as number) >= 0 &&
+    Number.isSafeInteger(value.translatedPages) &&
+    (value.translatedPages as number) >= 0 &&
+    Number.isSafeInteger(value.failedPages) && (value.failedPages as number) >= 0;
+}
+
+export function isReaderSessionCommandResponse(
+  value: unknown
+): value is ReaderSessionCommandResponse {
+  if (typeof value !== "object" || value === null ||
+      !("success" in value) || typeof value.success !== "boolean") return false;
+  if (value.success) {
+    return Object.keys(value).length === 2 && "status" in value &&
+      isReaderSessionStatusResponse(value.status);
+  }
+  return Object.keys(value).length === 2 && "error" in value &&
+    typeof value.error === "string";
 }
 
 function isRecordWithKeys(

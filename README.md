@@ -8,6 +8,13 @@ session. The loopback backend supports a deterministic post-OCR preview by
 default and an explicitly selected real local TranslateGemma model through
 Ollama. No API key is needed for the local model.
 
+The milestone 9 reader redesign introduces an explicit chapter session and a
+reader-first popup. The normal flow prepares the open chapter, reports its
+ordered page count, and keeps translation visibility and session cleanup in one
+place. Local DBNet/OCR48px + TranslateGemma remains available unchanged behind
+an **Advanced → Local AI processing** opt-in, which is off by default for
+devices that are not set up to run Docker and Ollama.
+
 Milestone 5 adds isolated Docker services and a reproducible multilingual
 benchmark for local text detection and OCR. It does not add real translation or
 a production backend.
@@ -20,8 +27,8 @@ local-first production architecture.
 ## Current architecture
 
 - **Chrome extension:** WXT, React, and strict TypeScript on Chrome Manifest V3.
-  It owns page scanning, visible-page capture, editable OCR overlays, and popup
-  controls.
+  It owns chapter sessions, page discovery, visible-page capture, editable OCR
+  overlays, and reader controls.
 - **Optional loopback development backend:** binds to `127.0.0.1:8787`, uses
   local DBNet + OCR48px by default, and owns the post-OCR translation provider.
   The extension never talks directly to OCR or translation engines.
@@ -125,6 +132,9 @@ docker compose down
 
 ## Current limitations
 
+- Chapter discovery is implemented, but automatic whole-chapter real
+  translation is not yet wired to an approved standard engine. The UI does not
+  present the deterministic preview as real translation.
 - Larger pages can use **Start Long-Page OCR**. Capture the current visible
   segment, scroll manually with a small overlap, capture the next segment, and
   finish when ready. The extension never auto-scrolls or fetches source images.
@@ -202,13 +212,14 @@ fallback instead of the local provider.
    `"translationReady":true`.
 4. Run `pnpm build`, open `chrome://extensions`, enable Developer mode, and
    load `.output/chrome-mv3` as an unpacked extension.
-5. In the fixture tab, choose **Scan Manga Page**, ensure one complete page is
-   visible, then choose **Run Local OCR + Translate**.
+5. In the fixture tab, choose **Prepare this chapter**, open **Advanced**, and
+   explicitly enable **Local AI processing**. Ensure one complete page is
+   visible, then choose **Translate visible page locally**.
 6. Confirm OCR bubbles appear over the page, can be edited, and retain edits
    after hiding/showing overlays and scrolling the nested reader.
 7. Stop Manga Engine and retry to confirm the popup reports a friendly local
    OCR failure without exposing raw errors.
-8. For a page taller than the viewport, choose **Start Long-Page OCR**, capture
+8. For a page taller than the viewport, choose **Long-page fallback**, capture
    a segment, manually scroll with overlap, capture another segment, then choose
    **Finish Long-Page OCR**. Confirm bubbles are still editable and that cancel
    clears the session without retaining images.

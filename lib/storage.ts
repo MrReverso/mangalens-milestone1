@@ -29,6 +29,7 @@ export async function getSettings(): Promise<UserSettings> {
   const src = raw.sourceLanguage;
   const tgt = raw.targetLanguage;
   const visible = raw.translationsVisible;
+  const localAiEnabled = raw.localAiEnabled;
 
   return {
     sourceLanguage: typeof src === "string" && isValidSourceLanguage(src)
@@ -40,6 +41,9 @@ export async function getSettings(): Promise<UserSettings> {
     translationsVisible: typeof visible === "boolean"
       ? visible
       : DEFAULT_SETTINGS.translationsVisible,
+    localAiEnabled: typeof localAiEnabled === "boolean"
+      ? localAiEnabled
+      : DEFAULT_SETTINGS.localAiEnabled,
   };
 }
 

@@ -32,12 +32,14 @@ export interface UserSettings {
   sourceLanguage: SourceLanguage;
   targetLanguage: TargetLanguage;
   translationsVisible: boolean;
+  localAiEnabled: boolean;
 }
 
 export const DEFAULT_SETTINGS: UserSettings = {
   sourceLanguage: "auto",
   targetLanguage: "en",
   translationsVisible: true,
+  localAiEnabled: false,
 };
 
 // ── Detected Image ─────────────────────────────────────────────

@@ -8,6 +8,8 @@ import type {
   TranslationStatusResponse,
   CaptureContentResponse,
   ApplyTranslationResultResponse,
+  ReaderSessionCommandResponse,
+  ReaderSessionStatusResponse,
 } from "@/lib/messages";
 import type {
   TranslatePageInput,
@@ -64,10 +66,12 @@ function send(
   message: ExtensionMessage
 ): ScanPageResponse | ScanStatusResponse | TranslationCommandResponse |
   TranslationStatusResponse | CaptureContentResponse |
-  ApplyTranslationResultResponse {
+  ApplyTranslationResultResponse | ReaderSessionCommandResponse |
+  ReaderSessionStatusResponse {
   let response: ScanPageResponse | ScanStatusResponse |
     TranslationCommandResponse | TranslationStatusResponse |
-    CaptureContentResponse | ApplyTranslationResultResponse | undefined;
+    CaptureContentResponse | ApplyTranslationResultResponse |
+    ReaderSessionCommandResponse | ReaderSessionStatusResponse | undefined;
   controller.messageHandler(
     message,
     {} as chrome.runtime.MessageSender,
@@ -128,6 +132,33 @@ describe("MangaScannerController", () => {
       detectedImages: 1,
     });
 
+    controller.destroy();
+  });
+
+  it("starts and stops a chapter reader session without losing cleanup", () => {
+    document.title = "  Chapter 42   | Manga Site  ";
+    const first = createMangaImage();
+    const second = createMangaImage();
+    document.body.append(first, second);
+    const controller = new MangaScannerController();
+
+    expect(send(controller, { type: "START_READER_SESSION" })).toMatchObject({
+      success: true,
+      status: {
+        active: true,
+        title: "Chapter 42 | Manga Site",
+        totalPages: 2,
+        translatedPages: 0,
+      },
+    });
+    expect(send(controller, { type: "GET_READER_SESSION_STATUS" }))
+      .toMatchObject({ active: true, totalPages: 2 });
+
+    expect(send(controller, { type: "STOP_READER_SESSION" })).toMatchObject({
+      success: true,
+      status: { active: false, totalPages: 0 },
+    });
+    expect(document.querySelectorAll(".mangalens-marker")).toHaveLength(0);
     controller.destroy();
   });
 

@@ -6,6 +6,8 @@ import type {
   TranslationCommandResponse,
   TranslationStatusResponse,
   ApplyTranslationResultResponse,
+  ReaderSessionCommandResponse,
+  ReaderSessionStatusResponse,
 } from "@/lib/messages";
 import { isContentScriptMessage } from "@/lib/messages";
 import { isImageVisible } from "@/lib/image-position";
@@ -41,7 +43,9 @@ type ScannerResponse =
   | TranslationCommandResponse
   | TranslationStatusResponse
   | CaptureContentResponse
-  | ApplyTranslationResultResponse;
+  | ApplyTranslationResultResponse
+  | ReaderSessionCommandResponse
+  | ReaderSessionStatusResponse;
 type SendResponse = (response: ScannerResponse) => void;
 
 interface PageSession extends PageTranslation {
@@ -74,6 +78,9 @@ export class MangaScannerController {
   private preparedCapture: PreparedCapture | null = null;
   private readonly appliedRequestByPage = new Map<string, string>();
   private readonly appliedSequenceByPage = new Map<string, number>();
+  private readerSessionActive = false;
+  private readerSessionTitle = "";
+  private readerSessionUrl = "";
 
   constructor(
     translationProvider: TranslationProvider = new MockTranslationProvider()
@@ -92,6 +99,15 @@ export class MangaScannerController {
   ): boolean => {
     if (!isContentScriptMessage(message)) return false;
     switch (message.type) {
+      case "START_READER_SESSION":
+        this.startReaderSession(sendResponse);
+        return false;
+      case "GET_READER_SESSION_STATUS":
+        sendResponse(this.readerSessionStatus());
+        return false;
+      case "STOP_READER_SESSION":
+        this.stopReaderSession(sendResponse);
+        return false;
       case "SCAN_PAGE":
         this.scanPage(sendResponse);
         return true;
@@ -534,6 +550,43 @@ export class MangaScannerController {
     }
   }
 
+  private startReaderSession(sendResponse: SendResponse): void {
+    this.readerSessionActive = true;
+    this.readerSessionTitle = normalizeReaderTitle(document.title);
+    this.readerSessionUrl = window.location.href;
+    this.scanPage((response) => {
+      if (!("success" in response) || !response.success) {
+        this.readerSessionActive = false;
+        sendResponse("error" in response
+          ? { success: false, error: String(response.error) }
+          : { success: false, error: "Chapter discovery failed" });
+        return;
+      }
+      sendResponse({ success: true, status: this.readerSessionStatus() });
+    });
+  }
+
+  private stopReaderSession(sendResponse: SendResponse): void {
+    this.clearMarkers(() => undefined);
+    this.readerSessionActive = false;
+    this.readerSessionTitle = "";
+    this.readerSessionUrl = "";
+    sendResponse({ success: true, status: this.readerSessionStatus() });
+  }
+
+  private readerSessionStatus(): ReaderSessionStatusResponse {
+    const pages = [...this.pages.values()];
+    return {
+      type: "READER_SESSION_STATUS",
+      active: this.readerSessionActive,
+      title: this.readerSessionTitle,
+      url: this.readerSessionUrl,
+      totalPages: pages.length,
+      translatedPages: pages.filter((page) => page.status === "complete").length,
+      failedPages: pages.filter((page) => page.status === "error").length,
+    };
+  }
+
   private clearMarkers(sendResponse: SendResponse): void {
     try {
       this.forceRestoreCapture();
@@ -759,4 +812,9 @@ export async function waitForAnimationFrames(count: number): Promise<void> {
   for (let index = 0; index < count; index++) {
     await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
   }
+}
+
+function normalizeReaderTitle(title: string): string {
+  const normalized = title.replace(/\s+/g, " ").trim();
+  return normalized || "Untitled chapter";
 }
