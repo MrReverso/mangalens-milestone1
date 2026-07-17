@@ -153,11 +153,11 @@ export default function App() {
       if (!isTranslationPipelineProgressMessage(message) ||
           message.tabId !== localTranslationTabId.current) return;
       setLocalStage(message.stage);
-      const isOcr = currentServiceModeRef.current === "development-api";
-      const progressText: Record<TranslationPipelineStage, string> = isOcr
+      const usesBackend = currentServiceModeRef.current === "development-api";
+      const progressText: Record<TranslationPipelineStage, string> = usesBackend
         ? {
             capturing: "Capturing Page\u2026",
-            processing: "Running Local OCR + Translation\u2026",
+            processing: "Reading and translating page\u2026",
             applying: "Applying Text Overlays\u2026",
           }
         : {
@@ -492,7 +492,7 @@ export default function App() {
     }
   }
 
-  async function handleLocalTranslation(mode: TranslationServiceMode): Promise<void> {
+  async function handlePageTranslation(mode: TranslationServiceMode): Promise<void> {
     setIsLocalTranslating(true);
     setCurrentServiceMode(mode);
     currentServiceModeRef.current = mode;
@@ -537,6 +537,11 @@ export default function App() {
         setStatus({
           kind: "success",
           message: `Local translation applied to ${rawResponse.bubbleCount} text regions`,
+        });
+      } else if (rawResponse.resultKind === "translated-cloud") {
+        setStatus({
+          kind: "success",
+          message: `Page translated · ${rawResponse.bubbleCount} text regions`,
         });
       } else if (rawResponse.resultKind === "ocr-fallback") {
         setStatus({
@@ -702,7 +707,7 @@ export default function App() {
           <h1>MangaLens</h1>
           <p>Chapter translator</p>
         </div>
-        <span className="privacy-badge">Local-first</span>
+        <span className="privacy-badge">Private by design</span>
       </header>
 
       <section className="reader-card" aria-label="Chapter reader">
@@ -746,8 +751,21 @@ export default function App() {
         ) : (
           <div className="reader-session-actions">
             <p className="engine-note">
-              Chapter discovery is ready. Choose an engine in Advanced to process a page.
+              {localAiEnabled
+                ? "Local AI is selected. Use its controls in Advanced."
+                : "Translate the page currently visible in your browser."}
             </p>
+            {!localAiEnabled && hasMarkers && (
+              <button className="btn btn-primary reader-primary"
+                disabled={isScanning || isTranslating || isCapturing || isLocalTranslating}
+                onClick={() => handlePageTranslation("development-api")}>
+                {isLocalTranslating
+                  ? localStage === "capturing" ? "Capturing page…"
+                    : localStage === "processing" ? "Translating page…"
+                      : "Applying text…"
+                  : "Translate visible page"}
+              </button>
+            )}
             <label className="translation-toggle">
               <input type="checkbox" checked={translationsVisible}
                 onChange={(event) => handleTranslationVisibility(event.target.checked)} />
@@ -785,7 +803,7 @@ export default function App() {
               <div className="advanced-actions">
                 <button className="btn btn-primary"
                   disabled={isScanning || isTranslating || isCapturing || isLocalTranslating}
-                  onClick={() => handleLocalTranslation("development-api")}>
+                  onClick={() => handlePageTranslation("development-api")}>
                   {isLocalTranslating && currentServiceMode === "development-api"
                     ? localStage === "capturing" ? "Capturing page…"
                       : localStage === "processing" ? "Running local AI…"

@@ -12,9 +12,10 @@ import { normalizeParagraphBounds } from "./ocr-geometry";
 export const GOOGLE_VISION_ANNOTATE_ENDPOINT =
   "https://vision.googleapis.com/v1/images:annotate";
 
-const MAX_GOOGLE_RESPONSE_BYTES = 4 * 1024 * 1024;
+export const MAX_GOOGLE_RESPONSE_BYTES = 4 * 1024 * 1024;
 const MAX_REGIONS = 100;
 const MAX_TOTAL_CHARACTERS = 20_000;
+const PROJECT_ID_PATTERN = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 
 export class GoogleVisionOcrProvider implements OcrProvider {
   readonly id = "google-vision" as const;
@@ -25,10 +26,14 @@ export class GoogleVisionOcrProvider implements OcrProvider {
     private readonly accessTokenProvider: GoogleAccessTokenProvider,
     private readonly fetchImpl: typeof fetch = fetch,
     private readonly endpoint = GOOGLE_VISION_ANNOTATE_ENDPOINT,
-    private readonly maxResponseBytes = MAX_GOOGLE_RESPONSE_BYTES
+    private readonly maxResponseBytes = MAX_GOOGLE_RESPONSE_BYTES,
+    private readonly quotaProjectId?: string
   ) {
     validateGoogleVisionEndpoint(endpoint);
     if (!Number.isSafeInteger(maxResponseBytes) || maxResponseBytes <= 0) {
+      throw new OcrFailure("ocr-invalid-response");
+    }
+    if (quotaProjectId !== undefined && !PROJECT_ID_PATTERN.test(quotaProjectId)) {
       throw new OcrFailure("ocr-invalid-response");
     }
   }
@@ -51,6 +56,9 @@ export class GoogleVisionOcrProvider implements OcrProvider {
         headers: {
           "Content-Type": "application/json; charset=utf-8",
           Authorization: `Bearer ${accessToken}`,
+          ...(this.quotaProjectId
+            ? { "x-goog-user-project": this.quotaProjectId }
+            : {}),
         },
         body: JSON.stringify(requestBody),
         credentials: "omit",

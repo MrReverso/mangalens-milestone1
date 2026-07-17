@@ -32,8 +32,9 @@ describe("OCR extension UX and privacy boundary", () => {
     );
     expect(popup).toContain("Local AI processing");
     expect(popup).toContain("Translate visible page locally");
+    expect(popup).toContain("Translate visible page");
     expect(popup).toContain("requires Docker, Ollama, and a capable computer");
-    expect(popup).toContain("Running Local OCR + Translation");
+    expect(popup).toContain("Reading and translating page");
     expect(popup).toContain("Applying Text Overlays");
     expect(popup).toContain("Translation not enabled");
     expect(popup).toContain("Local translation preview applied");
