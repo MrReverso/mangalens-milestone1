@@ -4,27 +4,40 @@ MangaLens is a Chrome Manifest V3 prototype for translating manga, manhwa,
 webtoon, and comic pages. The extension can detect page images, capture a fully
 visible page or user-guided overlapping visible segments, run local OCR, render
 translated text as editable overlays, and preserve edits for the current tab
-session. The loopback backend supports a deterministic post-OCR preview by
-default and an explicitly selected real local TranslateGemma model through
-Ollama. No API key is needed for the local model.
+session. The backend supports Google Cloud Vision plus Cloud Translation LLM as
+the standard lightweight-device path, as well as an explicitly selected local
+DBNet/OCR48px plus TranslateGemma path through Docker and Ollama. No API key is
+needed for the local path.
+
+The milestone 9 reader redesign introduces an explicit chapter session and a
+reader-first popup. The normal flow prepares the open chapter, reports its
+ordered and currently visible page, keeps discovering lazy-loaded pages, and
+keeps translation visibility and session cleanup in one place. Normal reader
+mode hides numbered diagnostic outlines. Local DBNet/OCR48px + TranslateGemma
+remains available unchanged behind
+an **Advanced → Local AI processing** opt-in, which is off by default for
+devices that are not set up to run Docker and Ollama.
 
 Milestone 5 adds isolated Docker services and a reproducible multilingual
 benchmark for local text detection and OCR. It does not add real translation or
 a production backend.
 
-Google Cloud Vision remains available only as an explicitly enabled development
-comparison and difficult-page fallback. It is disabled by default, requires the
-exact `MANGALENS_ENABLE_GOOGLE_VISION=true` opt-in, and is not the preferred
-local-first production architecture.
+The Google Cloud path is an exact server-side opt-in and remains inactive until
+deployment credentials are configured. Credentials never enter extension code,
+Chrome messages, storage, logs, or this repository.
 
 ## Current architecture
 
 - **Chrome extension:** WXT, React, and strict TypeScript on Chrome Manifest V3.
-  It owns page scanning, visible-page capture, editable OCR overlays, and popup
-  controls.
+  It owns chapter sessions, page discovery, visible-page capture, editable OCR
+  overlays, and reader controls.
 - **Optional loopback development backend:** binds to `127.0.0.1:8787`, uses
   local DBNet + OCR48px by default, and owns the post-OCR translation provider.
   The extension never talks directly to OCR or translation engines.
+- **Standard cloud engine:** Google Cloud Vision reads page images and Google
+  Cloud Translation LLM (`general/translation-llm`) translates bounded OCR text.
+  Both calls are backend-only, use server-side Application Default Credentials,
+  reject redirects, and runtime-validate bounded provider responses.
 - **Local translation engine:** an explicit Ollama opt-in at
   `127.0.0.1:11434` uses an allowlisted TranslateGemma model. Only bounded OCR
   text and opaque bubble IDs reach it; page images never do.
@@ -35,9 +48,10 @@ local-first production architecture.
 - **Benchmark Orchestrator:** invokes each pipeline without silent detector
   fallback, scores results against ground-truth polygons and text, and generates
   JSON, HTML, Markdown, and annotated-image evidence.
-- **Google Vision development fallback:** an explicitly paid-provider opt-in
-  used for comparison only. Credentials remain server-side and the extension
-  has no Google host permissions.
+- **Google Vision comparison fallback:** `MANGALENS_ENABLE_GOOGLE_VISION=true`
+  can still pair Vision with a local/preview translator for comparison. The
+  standard `google-cloud` selection enables the reviewed cloud OCR + translation
+  pair together.
 
 ## Milestone 5 pipelines
 
@@ -125,14 +139,18 @@ docker compose down
 
 ## Current limitations
 
+- Visible-page cloud translation is wired to the backend provider contract.
+  A production backend URL, user authentication, quotas, and billing controls
+  are still required before public testing; the current extension transport is
+  deliberately loopback-only.
 - Larger pages can use **Start Long-Page OCR**. Capture the current visible
   segment, scroll manually with a small overlap, capture the next segment, and
   finish when ready. The extension never auto-scrolls or fetches source images.
   Segment PNGs remain only in background memory and are discarded after finish,
   cancellation, expiry, or failure.
 - OCR edits persist only for the current tab session.
-- Google Vision is a development-only comparison and remains disabled by
-  default.
+- Google Cloud remains disabled until the exact provider selection, project,
+  and server-side credentials are configured.
 - The real local translation adapter is functional but still needs broader
   multilingual quality evaluation before it can be called production-quality.
   Production deployment, accounts, billing, durable persistence, analytics,
@@ -158,6 +176,28 @@ Ollama requests use only exact loopback endpoints, disable redirects and
 credentials, enforce time and response-size bounds, and treat both the Ollama
 envelope and generated translation JSON as untrusted. OCR text, translations,
 and page images are never logged or persisted.
+
+## Milestone 9 cloud translation
+
+The standard engine uses Google Cloud Vision for document OCR and Google Cloud
+Translation LLM for translation. One exact opt-in selects the reviewed pair:
+
+```bash
+gcloud auth application-default login
+MANGALENS_TRANSLATION_PROVIDER=google-cloud \
+MANGALENS_GOOGLE_CLOUD_PROJECT=your-google-cloud-project \
+pnpm dev:backend
+```
+
+This uses Application Default Credentials; there is no API-key field in the
+extension. For production, the backend will use an attached service identity or
+secret-managed credential rather than a credential committed to GitHub. The
+optional `MANGALENS_GOOGLE_CLOUD_LOCATION` defaults to `us-central1`.
+
+With this configuration, `/health` reports `google-vision` and
+`google-translation-llm`. The health request checks whether server credentials
+are available without making a paid translation request. Translation errors
+preserve validated OCR output as an explicit “translation unavailable” result.
 
 ## Milestone 6 local development
 
@@ -202,13 +242,14 @@ fallback instead of the local provider.
    `"translationReady":true`.
 4. Run `pnpm build`, open `chrome://extensions`, enable Developer mode, and
    load `.output/chrome-mv3` as an unpacked extension.
-5. In the fixture tab, choose **Scan Manga Page**, ensure one complete page is
-   visible, then choose **Run Local OCR + Translate**.
+5. In the fixture tab, choose **Prepare this chapter**, open **Advanced**, and
+   explicitly enable **Local AI processing**. Ensure one complete page is
+   visible, then choose **Translate visible page locally**.
 6. Confirm OCR bubbles appear over the page, can be edited, and retain edits
    after hiding/showing overlays and scrolling the nested reader.
 7. Stop Manga Engine and retry to confirm the popup reports a friendly local
    OCR failure without exposing raw errors.
-8. For a page taller than the viewport, choose **Start Long-Page OCR**, capture
+8. For a page taller than the viewport, choose **Long-page fallback**, capture
    a segment, manually scroll with overlap, capture another segment, then choose
    **Finish Long-Page OCR**. Confirm bubbles are still editable and that cancel
    clears the session without retaining images.

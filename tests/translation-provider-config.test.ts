@@ -28,4 +28,27 @@ describe("translation provider configuration", () => {
       MANGALENS_OLLAMA_MODEL: "unreviewed-model",
     }, vi.fn())).toThrow("Unsupported local translation model configuration");
   });
+
+  it("requires an exact opt-in and validated server project for Google Cloud", () => {
+    const accessTokenProvider = { getAccessToken: vi.fn(async () => "token") };
+    expect(createConfiguredTranslationProvider({
+      MANGALENS_TRANSLATION_PROVIDER: "google-cloud",
+      MANGALENS_GOOGLE_CLOUD_PROJECT: "mangalens-test1",
+    }, vi.fn(), accessTokenProvider)).toMatchObject({
+      id: "google-translation-llm",
+      execution: "remote",
+      enabled: true,
+    });
+    expect(() => createConfiguredTranslationProvider({
+      MANGALENS_TRANSLATION_PROVIDER: "google-cloud",
+    }, vi.fn(), accessTokenProvider)).toThrow(
+      "Google Cloud project configuration is required"
+    );
+    expect(() => createConfiguredTranslationProvider({
+      MANGALENS_TRANSLATION_PROVIDER: "google-cloud",
+      MANGALENS_GOOGLE_CLOUD_PROJECT: "../untrusted",
+    }, vi.fn(), accessTokenProvider)).toThrow(
+      "Invalid Google Cloud project configuration"
+    );
+  });
 });

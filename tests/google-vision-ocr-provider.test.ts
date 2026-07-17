@@ -126,6 +126,33 @@ describe("Google Vision request construction", () => {
 });
 
 describe("GoogleVisionOcrProvider", () => {
+  it("adds a validated quota project only when configured by the server", async () => {
+    const fetchImpl = vi.fn(async (_url: RequestInfo | URL, _init?: RequestInit) =>
+      new Response(JSON.stringify(visionResponse()), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+      }));
+    const provider = new GoogleVisionOcrProvider(
+      tokenProvider,
+      fetchImpl as typeof fetch,
+      GOOGLE_VISION_ANNOTATE_ENDPOINT,
+      4 * 1024 * 1024,
+      "mangalens-test1"
+    );
+
+    await provider.recognize(input, new AbortController().signal);
+    expect(fetchImpl.mock.calls[0][1]?.headers).toMatchObject({
+      "x-goog-user-project": "mangalens-test1",
+    });
+    expect(() => new GoogleVisionOcrProvider(
+      tokenProvider,
+      fetchImpl as typeof fetch,
+      GOOGLE_VISION_ANNOTATE_ENDPOINT,
+      4 * 1024 * 1024,
+      "../invalid"
+    )).toThrow("ocr-invalid-response");
+  });
+
   it("uses the token only in Authorization and sends hardened fetch options once", async () => {
     let seenUrl: string | URL | Request = "";
     let seenInit: RequestInit | undefined;

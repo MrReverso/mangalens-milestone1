@@ -24,6 +24,7 @@ export class OverlayManager {
   private resizeObserver: ResizeObserver | null = null;
   private throttledUpdate: (() => void) | null = null;
   private captureSuppressed = false;
+  private markersVisible = true;
 
   /**
    * Create the overlay root element if it doesn't exist yet.
@@ -50,6 +51,7 @@ export class OverlayManager {
       zIndex: "2147483640",
       overflow: "hidden",
       visibility: this.captureSuppressed ? "hidden" : "visible",
+      display: this.markersVisible ? "block" : "none",
     } as CSSStyleDeclaration);
     document.documentElement.appendChild(el);
     this.root = el;
@@ -224,6 +226,11 @@ export class OverlayManager {
     if (this.root) {
       this.root.style.visibility = suppressed ? "hidden" : "visible";
     }
+  }
+
+  setMarkersVisible(visible: boolean): void {
+    this.markersVisible = visible;
+    if (this.root) this.root.style.display = visible ? "block" : "none";
   }
 }
 

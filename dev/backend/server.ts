@@ -4,7 +4,11 @@ import {
   AdcGoogleAccessTokenProvider,
   installSafeGoogleAuthWarningFilter,
 } from "./ocr/google-access-token-provider";
-import { GoogleVisionOcrProvider } from "./ocr/google-vision-ocr-provider";
+import {
+  GOOGLE_VISION_ANNOTATE_ENDPOINT,
+  GoogleVisionOcrProvider,
+  MAX_GOOGLE_RESPONSE_BYTES,
+} from "./ocr/google-vision-ocr-provider";
 import { DbnetOcr48pxProvider } from "./ocr/dbnet-ocr48px-provider";
 import { createConfiguredTranslationProvider } from "./translation/translation-provider-config";
 import {
@@ -15,17 +19,31 @@ import {
 const PORT = 8787;
 const HOST = "127.0.0.1";
 installSafeGoogleAuthWarningFilter();
-const googleVisionEnabled = isGoogleVisionExplicitlyEnabled(
+const googleAccessTokenProvider = new AdcGoogleAccessTokenProvider();
+const googleCloudEnabled = process.env.MANGALENS_TRANSLATION_PROVIDER === "google-cloud";
+const googleVisionEnabled = googleCloudEnabled || isGoogleVisionExplicitlyEnabled(
   process.env.MANGALENS_ENABLE_GOOGLE_VISION
 );
 const handleTranslationRequest = createTranslationRequestHandler({
   ocrProvider: googleVisionEnabled
     ? new OptionalOcrProvider(
-      new GoogleVisionOcrProvider(new AdcGoogleAccessTokenProvider()),
+      new GoogleVisionOcrProvider(
+        googleAccessTokenProvider,
+        fetch,
+        GOOGLE_VISION_ANNOTATE_ENDPOINT,
+        MAX_GOOGLE_RESPONSE_BYTES,
+        googleCloudEnabled
+          ? process.env.MANGALENS_GOOGLE_CLOUD_PROJECT
+          : undefined
+      ),
       true
     )
     : new DbnetOcr48pxProvider(),
-  translationProvider: createConfiguredTranslationProvider(process.env),
+  translationProvider: createConfiguredTranslationProvider(
+    process.env,
+    fetch,
+    googleAccessTokenProvider
+  ),
 });
 
 const server = createServer((req, res) => {

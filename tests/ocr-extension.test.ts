@@ -25,13 +25,16 @@ describe("OCR extension UX and privacy boundary", () => {
       .toBe("No readable text was detected");
   });
 
-  it("uses OCR-specific button, progress, and non-translation success copy", () => {
+  it("keeps local OCR explicit inside the advanced reader controls", () => {
     const popup = fs.readFileSync(
       path.resolve(__dirname, "../entrypoints/popup/App.tsx"),
       "utf8"
     );
-    expect(popup).toContain("Run Local OCR + Translate");
-    expect(popup).toContain("Running Local OCR + Translation");
+    expect(popup).toContain("Local AI processing");
+    expect(popup).toContain("Translate visible page locally");
+    expect(popup).toContain("Translate visible page");
+    expect(popup).toContain("requires Docker, Ollama, and a capable computer");
+    expect(popup).toContain("Reading and translating page");
     expect(popup).toContain("Applying Text Overlays");
     expect(popup).toContain("Translation not enabled");
     expect(popup).toContain("Local translation preview applied");

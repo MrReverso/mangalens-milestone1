@@ -30,6 +30,138 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+.reader-popup { min-height: 100%; }
+
+.privacy-badge {
+  margin-left: auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.reader-card {
+  margin: 4px 14px 12px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: linear-gradient(160deg, var(--bg-surface), #0d1a2d);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.chapter-summary { min-width: 0; }
+
+.chapter-state {
+  display: inline-block;
+  margin-bottom: 7px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.chapter-summary h2 {
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 17px;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chapter-summary.empty h2 {
+  overflow: visible;
+  white-space: normal;
+}
+
+.chapter-summary p,
+.engine-note {
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.reader-primary { padding-block: 12px; }
+
+.reader-session-actions,
+.advanced-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.advanced-panel {
+  margin: 0 14px 12px;
+  border-top: 1px solid var(--border);
+}
+
+.advanced-toggle {
+  width: 100%;
+  padding: 12px 2px;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  display: flex;
+  justify-content: space-between;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.advanced-content {
+  padding: 2px 2px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 13px;
+}
+
+.engine-toggle {
+  padding: 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.engine-toggle > span { flex: 1; }
+
+.engine-toggle strong,
+.engine-toggle small { display: block; }
+
+.engine-toggle strong {
+  color: var(--text-primary);
+  font-size: 12px;
+}
+
+.engine-toggle small {
+  margin-top: 3px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.engine-toggle input,
+.translation-toggle input { accent-color: var(--accent); }
+
+.developer-tools {
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+
+.developer-tools summary {
+  padding: 4px 0 10px;
+  cursor: pointer;
+}
+
 /* ── Header ──────────────────────────────────────────────────── */
 
 .popup-header {

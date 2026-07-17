@@ -156,6 +156,27 @@ describe("TranslationCoordinator", () => {
     expect(isBackgroundTranslationResponse(result)).toBe(true);
   });
 
+  it("distinguishes a remote cloud provider from local translation", async () => {
+    const service = {
+      translate: vi.fn(async (input) => ({
+        contractVersion: 1,
+        requestId: input.metadata.requestId,
+        pageId: input.metadata.pageId,
+        bubbles,
+        translation: {
+          providerId: "google-translation-llm",
+          execution: "remote",
+          status: "translated",
+        },
+      })),
+    };
+    const result = await new TranslationCoordinator(dependencies({
+      services: { "local-demo": service, "development-api": service },
+    })).translate({ ...request, serviceMode: "development-api" });
+    expect(result).toMatchObject({ resultKind: "translated-cloud" });
+    expect(isBackgroundTranslationResponse(result)).toBe(true);
+  });
+
   it("builds matching validated request metadata", async () => {
     let seen: TranslationApiRequestMetadata | null = null;
     const mockService = {

@@ -16,8 +16,13 @@ import type {
   TranslationStatusResponse,
   BackgroundCaptureResponse,
   ExpandedCaptureResponse,
+  ReaderSessionStatusResponse,
 } from "@/lib/messages";
-import { isExpandedCaptureResponse } from "@/lib/messages";
+import {
+  isExpandedCaptureResponse,
+  isReaderSessionCommandResponse,
+  isReaderSessionStatusResponse,
+} from "@/lib/messages";
 import { isBackgroundCaptureResponse } from "@/types/capture";
 import { captureErrorMessage } from "@/lib/capture/capture-status";
 import {
@@ -45,7 +50,7 @@ interface StatusState {
 
 const INITIAL_STATUS: StatusState = {
   kind: "ready",
-  message: "Ready to scan",
+  message: "Open a manga or webtoon chapter to begin",
 };
 
 // ── Injection helper ───────────────────────────────────────────
@@ -117,6 +122,10 @@ export default function App() {
     segmentCount: number;
   } | null>(null);
   const [isExpandedCaptureBusy, setIsExpandedCaptureBusy] = useState(false);
+  const [readerSession, setReaderSession] =
+    useState<ReaderSessionStatusResponse | null>(null);
+  const [localAiEnabled, setLocalAiEnabled] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   // ── Load persisted settings on mount ─────────────────────────
   useEffect(() => {
@@ -124,21 +133,31 @@ export default function App() {
       setSourceLanguage(settings.sourceLanguage);
       setTargetLanguage(settings.targetLanguage);
       setTranslationsVisible(settings.translationsVisible);
+      setLocalAiEnabled(settings.localAiEnabled);
       checkScanStatus(settings.translationsVisible);
+      refreshReaderSessionStatus().catch(() => undefined);
       refreshExpandedCaptureStatus().catch(() => undefined);
     });
   }, []);
+
+  useEffect(() => {
+    if (!readerSession?.active) return;
+    const interval = window.setInterval(() => {
+      refreshReaderSessionStatus().catch(() => undefined);
+    }, 750);
+    return () => window.clearInterval(interval);
+  }, [readerSession?.active]);
 
   useEffect(() => {
     const listener = (message: unknown): void => {
       if (!isTranslationPipelineProgressMessage(message) ||
           message.tabId !== localTranslationTabId.current) return;
       setLocalStage(message.stage);
-      const isOcr = currentServiceModeRef.current === "development-api";
-      const progressText: Record<TranslationPipelineStage, string> = isOcr
+      const usesBackend = currentServiceModeRef.current === "development-api";
+      const progressText: Record<TranslationPipelineStage, string> = usesBackend
         ? {
             capturing: "Capturing Page\u2026",
-            processing: "Running Local OCR + Translation\u2026",
+            processing: "Reading and translating page\u2026",
             applying: "Applying Text Overlays\u2026",
           }
         : {
@@ -156,14 +175,14 @@ export default function App() {
   const handleSourceChange = useCallback((value: string) => {
     const lang = value as SourceLanguage;
     setSourceLanguage(lang);
-    saveSettings({ sourceLanguage: lang, targetLanguage, translationsVisible });
-  }, [targetLanguage, translationsVisible]);
+    saveSettings({ sourceLanguage: lang, targetLanguage, translationsVisible, localAiEnabled });
+  }, [targetLanguage, translationsVisible, localAiEnabled]);
 
   const handleTargetChange = useCallback((value: string) => {
     const lang = value as TargetLanguage;
     setTargetLanguage(lang);
-    saveSettings({ sourceLanguage, targetLanguage: lang, translationsVisible });
-  }, [sourceLanguage, translationsVisible]);
+    saveSettings({ sourceLanguage, targetLanguage: lang, translationsVisible, localAiEnabled });
+  }, [sourceLanguage, translationsVisible, localAiEnabled]);
 
   // ── Get active tab ────────────────────────────────────────────
   async function getActiveTab(): Promise<chrome.tabs.Tab> {
@@ -190,6 +209,71 @@ export default function App() {
         segmentCount: raw.status.segmentCount,
       });
     }
+  }
+
+  async function refreshReaderSessionStatus(): Promise<void> {
+    const tab = await getActiveTab();
+    if (!tab.id) return;
+    const raw: unknown = await chrome.tabs.sendMessage(tab.id, {
+      type: "GET_READER_SESSION_STATUS" as const,
+    });
+    if (isReaderSessionStatusResponse(raw)) setReaderSession(raw);
+  }
+
+  async function handlePrepareChapter(): Promise<void> {
+    setIsScanning(true);
+    setStatus({ kind: "scanning", message: "Finding chapter pages…" });
+    try {
+      const tab = await getActiveTab();
+      await ensureContentScript(tab);
+      const raw: unknown = await chrome.tabs.sendMessage(tab.id!, {
+        type: "START_READER_SESSION" as const,
+      });
+      if (!isReaderSessionCommandResponse(raw) || !raw.success) {
+        throw new Error("reader-session-failed");
+      }
+      setReaderSession(raw.status);
+      setHasMarkers(raw.status.totalPages > 0);
+      setStatus(raw.status.totalPages > 0
+        ? { kind: "success", message: `${raw.status.totalPages} chapter pages ready` }
+        : { kind: "not-found", message: "No manga pages found on this site" });
+    } catch (error: unknown) {
+      setStatus({
+        kind: "error",
+        message: error instanceof Error && error.message === "restricted-page"
+          ? "MangaLens cannot run on this page"
+          : "Could not prepare this chapter",
+      });
+    } finally {
+      setIsScanning(false);
+    }
+  }
+
+  async function handleStopReaderSession(): Promise<void> {
+    try {
+      const tab = await getActiveTab();
+      const raw: unknown = await chrome.tabs.sendMessage(tab.id!, {
+        type: "STOP_READER_SESSION" as const,
+      });
+      if (isReaderSessionCommandResponse(raw) && raw.success) {
+        setReaderSession(raw.status);
+      }
+    } finally {
+      setHasMarkers(false);
+      setHasTranslations(false);
+      setExpandedSession(null);
+      setStatus(INITIAL_STATUS);
+    }
+  }
+
+  async function handleLocalAiSetting(enabled: boolean): Promise<void> {
+    setLocalAiEnabled(enabled);
+    await saveSettings({
+      sourceLanguage,
+      targetLanguage,
+      translationsVisible,
+      localAiEnabled: enabled,
+    });
   }
 
   // ── Check existing scan status ───────────────────────────────
@@ -340,7 +424,7 @@ export default function App() {
 
   async function handleTranslationVisibility(visible: boolean): Promise<void> {
     setTranslationsVisible(visible);
-    await saveSettings({ sourceLanguage, targetLanguage, translationsVisible: visible });
+    await saveSettings({ sourceLanguage, targetLanguage, translationsVisible: visible, localAiEnabled });
     try {
       const tab = await getActiveTab();
       await chrome.tabs.sendMessage(tab.id!, {
@@ -408,7 +492,7 @@ export default function App() {
     }
   }
 
-  async function handleLocalTranslation(mode: TranslationServiceMode): Promise<void> {
+  async function handlePageTranslation(mode: TranslationServiceMode): Promise<void> {
     setIsLocalTranslating(true);
     setCurrentServiceMode(mode);
     currentServiceModeRef.current = mode;
@@ -453,6 +537,11 @@ export default function App() {
         setStatus({
           kind: "success",
           message: `Local translation applied to ${rawResponse.bubbleCount} text regions`,
+        });
+      } else if (rawResponse.resultKind === "translated-cloud") {
+        setStatus({
+          kind: "success",
+          message: `Page translated · ${rawResponse.bubbleCount} text regions`,
         });
       } else if (rawResponse.resultKind === "ocr-fallback") {
         setStatus({
@@ -611,162 +700,163 @@ export default function App() {
 
   // ── Render ───────────────────────────────────────────────────
   return (
-    <>
+    <main className="reader-popup">
       <header className="popup-header">
         <div className="logo-mark">M</div>
         <div className="header-text">
           <h1>MangaLens</h1>
-          <p>Manga Translator</p>
+          <p>Chapter translator</p>
         </div>
+        <span className="privacy-badge">Private by design</span>
       </header>
 
-      <div className="divider" />
+      <section className="reader-card" aria-label="Chapter reader">
+        {readerSession?.active ? (
+          <div className="chapter-summary">
+            <span className="chapter-state">Chapter ready</span>
+            <h2>{readerSession.title}</h2>
+            <p>
+              {readerSession.totalPages} page{readerSession.totalPages === 1 ? "" : "s"} detected
+              {readerSession.currentPage !== null
+                ? ` · viewing page ${readerSession.currentPage}`
+                : ""}
+              {readerSession.translatedPages > 0
+                ? ` · ${readerSession.translatedPages} translated`
+                : ""}
+            </p>
+          </div>
+        ) : (
+          <div className="chapter-summary empty">
+            <span className="chapter-state">Current tab</span>
+            <h2>Translate the chapter you’re reading</h2>
+            <p>MangaLens finds comic pages directly on the open website.</p>
+          </div>
+        )}
 
-      <section className="popup-controls">
         <LanguageSelect
-          label="Source Language"
-          value={sourceLanguage}
-          options={SOURCE_LANGUAGE_OPTIONS}
-          onChange={handleSourceChange}
-        />
-        <LanguageSelect
-          label="Target Language"
+          label="Read in"
           value={targetLanguage}
           options={TARGET_LANGUAGE_OPTIONS}
           onChange={handleTargetChange}
         />
+
+        {!readerSession?.active ? (
+          <button
+            className="btn btn-primary reader-primary"
+            disabled={isScanning}
+            onClick={handlePrepareChapter}
+          >
+            {isScanning ? "Finding chapter pages…" : "Prepare this chapter"}
+          </button>
+        ) : (
+          <div className="reader-session-actions">
+            <p className="engine-note">
+              {localAiEnabled
+                ? "Local AI is selected. Use its controls in Advanced."
+                : "Translate the page currently visible in your browser."}
+            </p>
+            {!localAiEnabled && hasMarkers && (
+              <button className="btn btn-primary reader-primary"
+                disabled={isScanning || isTranslating || isCapturing || isLocalTranslating}
+                onClick={() => handlePageTranslation("development-api")}>
+                {isLocalTranslating
+                  ? localStage === "capturing" ? "Capturing page…"
+                    : localStage === "processing" ? "Translating page…"
+                      : "Applying text…"
+                  : "Translate visible page"}
+              </button>
+            )}
+            <label className="translation-toggle">
+              <input type="checkbox" checked={translationsVisible}
+                onChange={(event) => handleTranslationVisibility(event.target.checked)} />
+              <span>Show translated text</span>
+            </label>
+            <button className="btn btn-secondary" disabled={isLocalTranslating}
+              onClick={handleStopReaderSession}>
+              End reader session
+            </button>
+          </div>
+        )}
       </section>
 
-      <section className="popup-actions">
-        <button
-          className={`btn ${hasMarkers ? "btn-secondary" : "btn-primary"}`}
-          disabled={isScanning || isCapturing || isLocalTranslating}
-          onClick={handleScan}
-        >
-          {isScanning ? "Scanning\u2026" : "Scan Manga Page"}
+      <section className="advanced-panel">
+        <button className="advanced-toggle" type="button"
+          aria-expanded={advancedOpen} onClick={() => setAdvancedOpen(!advancedOpen)}>
+          <span>Advanced</span><span aria-hidden="true">{advancedOpen ? "−" : "+"}</span>
         </button>
 
-        {hasMarkers && (
-          <button
-            className="btn btn-primary"
-            disabled={isTranslating || isCapturing || isLocalTranslating}
-            onClick={handlePreviewTranslation}
-          >
-            {isTranslating ? "Translating\u2026" : "Preview Translation"}
-          </button>
-        )}
+        {advancedOpen && (
+          <div className="advanced-content">
+            <label className="engine-toggle">
+              <span>
+                <strong>Local AI processing</strong>
+                <small>Private · requires Docker, Ollama, and a capable computer</small>
+              </span>
+              <input type="checkbox" checked={localAiEnabled}
+                onChange={(event) => handleLocalAiSetting(event.target.checked)} />
+            </label>
 
-        {hasMarkers && !expandedSession && (
-          <button className="btn btn-secondary"
-            disabled={isScanning || isCapturing || isLocalTranslating || isExpandedCaptureBusy}
-            onClick={handleStartExpandedCapture}>
-            Start Long-Page OCR
-          </button>
-        )}
+            <LanguageSelect label="Source language" value={sourceLanguage}
+              options={SOURCE_LANGUAGE_OPTIONS} onChange={handleSourceChange} />
 
-        {hasMarkers && expandedSession && (
-          <>
-            <button className="btn btn-primary"
-              disabled={isExpandedCaptureBusy || isLocalTranslating}
-              onClick={handleCaptureExpandedSegment}>
-              Capture Segment ({expandedSession.segmentCount})
-            </button>
-            <button className="btn btn-primary"
-              disabled={isExpandedCaptureBusy || expandedSession.segmentCount === 0}
-              onClick={handleFinishExpandedCapture}>
-              Finish Long-Page OCR
-            </button>
-            <button className="btn btn-secondary" disabled={isExpandedCaptureBusy}
-              onClick={handleCancelExpandedCapture}>
-              Cancel Long-Page Capture
-            </button>
-          </>
-        )}
+            {localAiEnabled && readerSession?.active && hasMarkers && (
+              <div className="advanced-actions">
+                <button className="btn btn-primary"
+                  disabled={isScanning || isTranslating || isCapturing || isLocalTranslating}
+                  onClick={() => handlePageTranslation("development-api")}>
+                  {isLocalTranslating && currentServiceMode === "development-api"
+                    ? localStage === "capturing" ? "Capturing page…"
+                      : localStage === "processing" ? "Running local AI…"
+                        : "Applying text…"
+                    : "Translate visible page locally"}
+                </button>
 
-        {hasMarkers && (
-          <button
-            className="btn btn-primary"
-            disabled={
-              isScanning || isTranslating || isCapturing || isLocalTranslating
-            }
-            onClick={() => handleLocalTranslation("local-demo")}
-          >
-            {isLocalTranslating && currentServiceMode === "local-demo"
-              ? localStage === "capturing"
-                ? "Capturing\u2026"
-                : localStage === "processing"
-                  ? "Processing\u2026"
-                  : "Applying\u2026"
-              : "Translate Visible Page"}
-          </button>
-        )}
+                {!expandedSession ? (
+                  <button className="btn btn-secondary"
+                    disabled={isScanning || isCapturing || isLocalTranslating || isExpandedCaptureBusy}
+                    onClick={handleStartExpandedCapture}>Long-page fallback</button>
+                ) : (
+                  <>
+                    <button className="btn btn-primary" disabled={isExpandedCaptureBusy}
+                      onClick={handleCaptureExpandedSegment}>
+                      Capture segment ({expandedSession.segmentCount})
+                    </button>
+                    <button className="btn btn-primary"
+                      disabled={isExpandedCaptureBusy || expandedSession.segmentCount === 0}
+                      onClick={handleFinishExpandedCapture}>Finish long page</button>
+                    <button className="btn btn-secondary" disabled={isExpandedCaptureBusy}
+                      onClick={handleCancelExpandedCapture}>Cancel fallback</button>
+                  </>
+                )}
+              </div>
+            )}
 
-        {hasMarkers && (
-          <button
-            className="btn btn-primary"
-            disabled={
-              isScanning || isTranslating || isCapturing || isLocalTranslating
-            }
-            onClick={() => handleLocalTranslation("development-api")}
-          >
-            {isLocalTranslating && currentServiceMode === "development-api"
-              ? localStage === "capturing"
-                ? "Capturing\u2026"
-                : localStage === "processing"
-                  ? "Running OCR + Translation\u2026"
-                  : "Applying Overlays\u2026"
-              : "Run Local OCR + Translate"}
-          </button>
-        )}
-
-        {hasMarkers && (
-          <button
-            className="btn btn-secondary"
-            disabled={
-              isScanning || isTranslating || isCapturing || isLocalTranslating
-            }
-            onClick={handleTestCapture}
-          >
-            {isCapturing ? "Capturing\u2026" : "Test Image Capture"}
-          </button>
-        )}
-
-        {hasMarkers && (
-          <label className="translation-toggle">
-            <input
-              type="checkbox"
-              checked={translationsVisible}
-              onChange={(event) =>
-                handleTranslationVisibility(event.target.checked)}
-            />
-            <span>Show translations</span>
-          </label>
-        )}
-
-        {(hasTranslations || isTranslating) && (
-          <button
-            className="btn btn-secondary"
-            disabled={isLocalTranslating}
-            onClick={handleClearTranslations}
-          >
-            Clear Translations
-          </button>
-        )}
-
-        {hasMarkers && (
-          <button
-            className="btn btn-secondary"
-            disabled={isLocalTranslating}
-            onClick={handleClear}
-          >
-            Clear Page Markers
-          </button>
+            <details className="developer-tools">
+              <summary>Developer diagnostics</summary>
+              <div className="advanced-actions">
+                <button className="btn btn-secondary" disabled={isScanning}
+                  onClick={handleScan}>Legacy page scan</button>
+                {hasMarkers && <button className="btn btn-secondary"
+                  disabled={isTranslating} onClick={handlePreviewTranslation}>
+                  {isTranslating ? "Running preview…" : "Deterministic preview"}
+                </button>}
+                {hasMarkers && <button className="btn btn-secondary"
+                  disabled={isCapturing} onClick={handleTestCapture}>
+                  {isCapturing ? "Testing capture…" : "Test capture"}
+                </button>}
+                {(hasTranslations || isTranslating) && <button className="btn btn-secondary"
+                  onClick={handleClearTranslations}>Clear translated text</button>}
+                {hasMarkers && <button className="btn btn-secondary"
+                  onClick={handleClear}>Clear page state</button>}
+              </div>
+            </details>
+          </div>
         )}
       </section>
 
       <div className="status-bar">
         <p className={statusClass()}>{status.message}</p>
       </div>
-    </>
+    </main>
   );
 }

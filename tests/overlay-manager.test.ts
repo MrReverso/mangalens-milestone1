@@ -73,4 +73,24 @@ describe("OverlayManager", () => {
       true
     );
   });
+
+  it("can hide diagnostic markers without dropping tracked pages", () => {
+    const image = document.createElement("img");
+    document.body.appendChild(image);
+    vi.spyOn(image, "getBoundingClientRect").mockReturnValue(
+      new DOMRect(0, 0, 800, 1200)
+    );
+    const overlay = new OverlayManager();
+    overlay.addMarker({ element: image, pageNumber: 1 });
+
+    overlay.setMarkersVisible(false);
+    expect(document.getElementById("mangalens-overlay-root")?.style.display)
+      .toBe("none");
+    expect(overlay.count).toBe(1);
+
+    overlay.setMarkersVisible(true);
+    expect(document.getElementById("mangalens-overlay-root")?.style.display)
+      .toBe("block");
+    overlay.clearAll();
+  });
 });

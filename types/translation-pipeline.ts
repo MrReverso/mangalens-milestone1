@@ -14,6 +14,7 @@ export type TranslationResultKind =
   | "ocr-preview"
   | "translated-preview"
   | "translated-local"
+  | "translated-cloud"
   | "ocr-fallback";
 
 export type TranslationPipelineStage = "capturing" | "processing" | "applying";
@@ -254,6 +255,7 @@ export function isBackgroundTranslationResponse(
         (value.resultKind === "ocr-preview" ||
          value.resultKind === "translated-preview" ||
          value.resultKind === "translated-local" ||
+         value.resultKind === "translated-cloud" ||
          value.resultKind === "ocr-fallback")));
   }
   return hasOnlyKeys(value, ["success", "error"]) &&

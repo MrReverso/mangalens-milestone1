@@ -368,7 +368,9 @@ export class TranslationCoordinator {
         : response.translation?.status === "translated"
           ? response.translation.providerId === "deterministic-local-preview"
             ? "translated-preview"
-            : "translated-local"
+            : response.translation.execution === "remote"
+              ? "translated-cloud"
+              : "translated-local"
           : response.translation?.status === "unavailable"
             ? "ocr-fallback"
             : "ocr-preview",
