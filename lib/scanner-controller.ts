@@ -109,7 +109,7 @@ export class MangaScannerController {
         this.stopReaderSession(sendResponse);
         return false;
       case "SCAN_PAGE":
-        this.scanPage(sendResponse);
+        this.scanPage(sendResponse, true);
         return true;
       case "CLEAR_MARKERS":
         this.clearMarkers(sendResponse);
@@ -518,7 +518,8 @@ export class MangaScannerController {
     };
   }
 
-  private scanPage(sendResponse: SendResponse): void {
+  private scanPage(sendResponse: SendResponse, showMarkers = true): void {
+    this.overlay.setMarkersVisible(showMarkers);
     if (this.isScanning) {
       sendResponse({
         success: true,
@@ -563,7 +564,7 @@ export class MangaScannerController {
         return;
       }
       sendResponse({ success: true, status: this.readerSessionStatus() });
-    });
+    }, false);
   }
 
   private stopReaderSession(sendResponse: SendResponse): void {
@@ -576,12 +577,16 @@ export class MangaScannerController {
 
   private readerSessionStatus(): ReaderSessionStatusResponse {
     const pages = [...this.pages.values()];
+    const visiblePage = pages
+      .filter((page) => isImageVisible(page.element))
+      .sort((first, second) => first.pageNumber - second.pageNumber)[0];
     return {
       type: "READER_SESSION_STATUS",
       active: this.readerSessionActive,
       title: this.readerSessionTitle,
       url: this.readerSessionUrl,
       totalPages: pages.length,
+      currentPage: visiblePage?.pageNumber ?? null,
       translatedPages: pages.filter((page) => page.status === "complete").length,
       failedPages: pages.filter((page) => page.status === "error").length,
     };

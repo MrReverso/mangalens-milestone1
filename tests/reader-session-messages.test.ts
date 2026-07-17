@@ -11,6 +11,7 @@ const status = {
   title: "Chapter 7",
   url: "https://reader.example/chapter/7",
   totalPages: 12,
+  currentPage: 2,
   translatedPages: 3,
   failedPages: 0,
 } as const;

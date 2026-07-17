@@ -148,9 +148,12 @@ describe("MangaScannerController", () => {
         active: true,
         title: "Chapter 42 | Manga Site",
         totalPages: 2,
+        currentPage: 1,
         translatedPages: 0,
       },
     });
+    expect(document.getElementById("mangalens-overlay-root")?.style.display)
+      .toBe("none");
     expect(send(controller, { type: "GET_READER_SESSION_STATUS" }))
       .toMatchObject({ active: true, totalPages: 2 });
 
@@ -159,6 +162,22 @@ describe("MangaScannerController", () => {
       status: { active: false, totalPages: 0 },
     });
     expect(document.querySelectorAll(".mangalens-marker")).toHaveLength(0);
+    controller.destroy();
+  });
+
+  it("keeps discovering lazy chapter pages while reader mode is active", () => {
+    const first = createMangaImage();
+    document.body.appendChild(first);
+    const controller = new MangaScannerController();
+    send(controller, { type: "START_READER_SESSION" });
+
+    const next = createMangaImage();
+    document.body.appendChild(next);
+    next.parentElement?.dispatchEvent(new Event("unused"));
+    controller.processImageCandidate(next);
+
+    expect(send(controller, { type: "GET_READER_SESSION_STATUS" }))
+      .toMatchObject({ active: true, totalPages: 2 });
     controller.destroy();
   });
 

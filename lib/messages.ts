@@ -168,6 +168,7 @@ export interface ReaderSessionStatusResponse {
   readonly title: string;
   readonly url: string;
   readonly totalPages: number;
+  readonly currentPage: number | null;
   readonly translatedPages: number;
   readonly failedPages: number;
 }
@@ -351,12 +352,14 @@ export function isReaderSessionStatusResponse(
   value: unknown
 ): value is ReaderSessionStatusResponse {
   return isRecordWithKeys(value, [
-    "type", "active", "title", "url", "totalPages", "translatedPages",
-    "failedPages",
+    "type", "active", "title", "url", "totalPages", "currentPage",
+    "translatedPages", "failedPages",
   ]) && value.type === "READER_SESSION_STATUS" &&
     typeof value.active === "boolean" &&
     typeof value.title === "string" && typeof value.url === "string" &&
     Number.isSafeInteger(value.totalPages) && (value.totalPages as number) >= 0 &&
+    (value.currentPage === null ||
+      Number.isSafeInteger(value.currentPage) && (value.currentPage as number) > 0) &&
     Number.isSafeInteger(value.translatedPages) &&
     (value.translatedPages as number) >= 0 &&
     Number.isSafeInteger(value.failedPages) && (value.failedPages as number) >= 0;

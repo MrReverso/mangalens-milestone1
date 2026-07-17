@@ -4,8 +4,10 @@
 - **Current branch:** `codex/milestone-9-chapter-reader-redesign`, based on the
   completed milestone 8 local-first translation branch.
 - **Reader slice:** The popup now starts and restores an explicit per-tab
-  chapter session, reports the detected chapter/title, and treats visibility
-  and cleanup as reader controls rather than developer operations.
+  chapter session, reports the detected chapter/title/current page, follows
+  lazy-loaded page changes, and treats visibility and cleanup as reader
+  controls rather than developer operations. Numbered detection outlines are
+  hidden during normal reader mode and remain available to diagnostics.
 - **Local AI preservation:** DBNet/OCR48px, Ollama/TranslateGemma, long-page
   capture, deterministic preview, and diagnostics remain intact under
   Advanced. Local AI is inactive by default and requires an explicit persisted
@@ -26,7 +28,7 @@
   translations, duplicate/foreign IDs, and oversized output leave validated
   OCR text and geometry available to editable overlays.
 - **Local validation:** `pnpm install --frozen-lockfile`, `pnpm compile`, all
-  365 tests, and `pnpm build` pass. Loopback health reports the deterministic
+  367 tests, and `pnpm build` pass. Loopback health reports the deterministic
   provider ready by default and the Ollama provider safely not ready when its
   local process/model is absent. The built manifest still has only `storage`,
   `activeTab`, and `scripting` plus the existing `127.0.0.1:8787` host access.

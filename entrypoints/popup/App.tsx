@@ -141,6 +141,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!readerSession?.active) return;
+    const interval = window.setInterval(() => {
+      refreshReaderSessionStatus().catch(() => undefined);
+    }, 750);
+    return () => window.clearInterval(interval);
+  }, [readerSession?.active]);
+
+  useEffect(() => {
     const listener = (message: unknown): void => {
       if (!isTranslationPipelineProgressMessage(message) ||
           message.tabId !== localTranslationTabId.current) return;
@@ -704,6 +712,9 @@ export default function App() {
             <h2>{readerSession.title}</h2>
             <p>
               {readerSession.totalPages} page{readerSession.totalPages === 1 ? "" : "s"} detected
+              {readerSession.currentPage !== null
+                ? ` · viewing page ${readerSession.currentPage}`
+                : ""}
               {readerSession.translatedPages > 0
                 ? ` · ${readerSession.translatedPages} translated`
                 : ""}

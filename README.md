@@ -10,8 +10,10 @@ Ollama. No API key is needed for the local model.
 
 The milestone 9 reader redesign introduces an explicit chapter session and a
 reader-first popup. The normal flow prepares the open chapter, reports its
-ordered page count, and keeps translation visibility and session cleanup in one
-place. Local DBNet/OCR48px + TranslateGemma remains available unchanged behind
+ordered and currently visible page, keeps discovering lazy-loaded pages, and
+keeps translation visibility and session cleanup in one place. Normal reader
+mode hides numbered diagnostic outlines. Local DBNet/OCR48px + TranslateGemma
+remains available unchanged behind
 an **Advanced → Local AI processing** opt-in, which is off by default for
 devices that are not set up to run Docker and Ollama.
 

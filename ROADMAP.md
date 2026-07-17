@@ -83,6 +83,8 @@ deployed automatically.
   status, and stop commands.
 - [x] Replace the development-heavy default popup with chapter discovery,
   target language, visibility, and session controls.
+- [x] Keep chapter counts/current-page progress live as lazy pages load, without
+  showing diagnostic page outlines in normal reader mode.
 - [x] Preserve DBNet/OCR48px, Ollama/TranslateGemma, expanded capture, and
   diagnostics behind an Advanced section.
 - [x] Keep local AI inactive by default and require an explicit persisted
